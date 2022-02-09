@@ -1,0 +1,29 @@
+[package]
+name = "crisscross_gluesql"
+version = "0.1.0"
+authors = []
+edition = "2018"
+
+[lib]
+name = "crisscross_gluesql"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "0.23.0"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+gluesql-core = "0.10.2"
+serde_rustler = {git = "https://github.com/avencera/serde_rustler", branch = "rustler-0.23"}
+async-channel = "1.6.1"
+bincode = "1.1.4"
+serde_json = "1.0.59"
+
+[dependencies.uuid]
+version = "0.4"
+features = ["v4"]
+
+[dependencies.gluesql]
+version = "0.10"
+default-features = false
+features = ["alter-table", "index", "transaction", "metadata"]
