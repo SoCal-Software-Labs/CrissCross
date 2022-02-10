@@ -219,50 +219,53 @@ fn start_sql<'a>(env: rustler::Env<'a>, pid: rustler::types::Pid, reference: rus
                             term.in_env(env)
                         });
 
-                        let s = match str::from_utf8(&caller.payload) {
-                            Ok(v) => v,
-                            Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
-                        };
-                    
-                        match glue.execute(s) {
-                            Ok(statement_result) => {
+                        match str::from_utf8(&caller.payload) {
+                            Err(e) =>(atoms::error(), "invalid utf8", hydrated_reference)
+                                                    .encode(env),
+                            Ok(v) =>
+                                match glue.execute(v) {
+                                    Ok(statement_result) => {
 
-                                // let mut bin =
-                                //     match rustler::OwnedBinary::new(result.len()) {
-                                //         Some(bin) => bin,
-                                //         None => {
-                                //             panic!("binary term allocation fail")
-                                //         }
-                                //     };
+                                        // let mut bin =
+                                        //     match rustler::OwnedBinary::new(result.len()) {
+                                        //         Some(bin) => bin,
+                                        //         None => {
+                                        //             panic!("binary term allocation fail")
+                                        //         }
+                                        //     };
 
-                                // bin.as_mut_slice()
-                                // .write_all(&result.as_bytes()[..])
-                                // .expect("memory copy of string failed");
+                                        // bin.as_mut_slice()
+                                        // .write_all(&result.as_bytes()[..])
+                                        // .expect("memory copy of string failed");
 
-                                match serde_json::to_value(statement_result) {
-                                    Ok(result) =>
-                                        match to_term(env, result) {
-                                            Ok(term) => {
-                                                (atoms::ok(), term, hydrated_reference)
-                                                .encode(env)
-                                            },
+                                        match serde_json::to_value(statement_result) {
+                                            Ok(result) =>
+                                                match to_term(env, result) {
+                                                    Ok(term) => {
+                                                        (atoms::ok(), term, hydrated_reference)
+                                                        .encode(env)
+                                                    },
+                                                    Err(e) => {
+                                                        (atoms::error(), e.to_string(), hydrated_reference)
+                                                            .encode(env)
+                                                    }
+                                                },
                                             Err(e) => {
-                                                (atoms::error(), e.to_string(), hydrated_reference)
-                                                    .encode(env)
-                                            }
-                                        },
+                                                        (atoms::error(), e.to_string(), hydrated_reference)
+                                                            .encode(env)
+                                                    }
+                                        }
+                                        
+                                    }
                                     Err(e) => {
-                                                (atoms::error(), e.to_string(), hydrated_reference)
-                                                    .encode(env)
-                                            }
-                                }
-                                
-                            }
-                            Err(e) => {
-                                (atoms::error(), e.to_string(), hydrated_reference)
-                                    .encode(env)
-                            }
+                                        (atoms::error(), e.to_string(), hydrated_reference)
+                                            .encode(env)
+                                    }
+                                },
+                             
                         }
+                    
+
                     });
 
                 }
@@ -284,7 +287,7 @@ fn stop<'a>(sender: rustler::Term<'a>) -> RealResult<rustler::Atom, rustler::Err
 }
 
 #[rustler::nif]
-fn execute<'a>(
+fn execute_statement<'a>(
     sender: rustler::Term<'a>,
     pid: rustler::types::Pid,
     reference: rustler::Term<'a>,
@@ -590,4 +593,4 @@ fn load(env: rustler::Env, _info: rustler::Term) -> bool {
     true
 }
 
-rustler::init!("Elixir.CrissCross.GlueSql", [start_sql, stop, execute, receive_pid_result, receive_result], load = load);
+rustler::init!("Elixir.CrissCross.GlueSql", [start_sql, stop, execute_statement, receive_pid_result, receive_result], load = load);

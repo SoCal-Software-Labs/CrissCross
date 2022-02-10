@@ -3,17 +3,19 @@ defmodule CrissCross.Store.CachedRPC do
 
   # `CubDB.Store.CachedRPC` is an implementation of the `Store` protocol
 
-  defstruct conn: nil, local_store: nil, tree_hash: nil
+  defstruct conns: nil, local_store: nil, tree_hash: nil
   alias CrissCross.Store.CachedRPC
 
-  def create(conn, tree_hash, local) do
-    {:ok, %CachedRPC{conn: conn, tree_hash: tree_hash, local_store: local}}
+  def create(conns, tree_hash, local) do
+    {:ok, %CachedRPC{conns: conns, tree_hash: tree_hash, local_store: local}}
   end
 end
 
 defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
   alias CrissCross.Store.CachedRPC
   alias CrissCross.Utils
+
+  require Logger
 
   def identifier(local) do
     local.tree_hash
@@ -45,50 +47,42 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
 
   def sync(%CachedRPC{}), do: :ok
 
-  def get_node(%CachedRPC{conn: conn, local_store: local_store} = rpc, location) do
+  def get_node(%CachedRPC{conns: conns, local_store: local_store} = rpc, location) do
     case CubDB.Store.get_node(local_store, location) do
       nil ->
-        case Redix.command(conn, ["GET", location]) do
-          {:ok, value} ->
-            v = Utils.deserialize_bert(value)
-            put_node(rpc, v)
-            v
+        conns
+        |> Enum.shuffle()
+        |> Enum.reduce_while(nil, fn conn, acc ->
+          case Redix.command(conn, ["GET", location]) do
+            {:ok, value} when is_binary(value) ->
+              v = Utils.deserialize_bert(value)
+              put_node(rpc, v)
+              {:halt, v}
 
-          _ = e ->
-            e
-        end
+            {:ok, nil} ->
+              {:cont, acc}
+
+            _ = e ->
+              Logger.error("Error with remote GET: #{inspect(e)}")
+              {:cont, acc}
+          end
+        end)
 
       node ->
         node
     end
   end
 
-  def get_latest_header(
-        %CachedRPC{conn: conn, tree_hash: tree_hash, local_store: local_store} = local
-      ) do
-    case CubDB.Store.get_latest_header(local_store) do
+  def get_latest_header(%CachedRPC{tree_hash: tree_hash, local_store: local_store} = local) do
+    case tree_hash do
       nil ->
-        case tree_hash do
-          nil ->
-            nil
+        nil
 
-          header_loc ->
-            case Redix.command(conn, ["GET", header_loc]) do
-              {:ok, nil} ->
-                nil
-
-              {:ok, value} when is_binary(value) ->
-                v = Utils.deserialize_bert(value)
-                put_node(local, v)
-                {header_loc, v}
-
-              _ = e ->
-                e
-            end
+      header_loc ->
+        case get_node(local, header_loc) do
+          nil -> nil
+          v -> {header_loc, v}
         end
-
-      e ->
-        e
     end
   end
 
@@ -96,7 +90,7 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
     CubDB.Storage.close(local_store)
   end
 
-  def blank?(%CachedRPC{conn: conn, tree_hash: tree_hash}) do
+  def blank?(%CachedRPC{tree_hash: tree_hash}) do
     tree_hash == nil
   end
 

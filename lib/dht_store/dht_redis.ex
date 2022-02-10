@@ -19,7 +19,6 @@ defmodule CrissCross.DHTStorage.DHTRedis do
   @node_expired 30 * @min_in_ms
 
   def start_link(opts) do
-    IO.inspect("DHTRedis")
     {redis_opts, opts} = Keyword.pop(opts, :redis_opts)
     {:ok, conn} = Redix.start_link(redis_opts, opts)
     {:ok, _pid} = GenServer.start_link(__MODULE__, [conn], [])
@@ -31,17 +30,43 @@ defmodule CrissCross.DHTStorage.DHTRedis do
     {:ok, %{conn: conn}}
   end
 
-  def put(pid, infohash, ip, port) do
-    expiry = :os.system_time(:millisecond) + @node_expired
-    bin = :erlang.term_to_binary({ip, port})
+  def cluster_announce(pid, cluster, infohash, ttl) do
+    expiry = :os.system_time(:millisecond) + ttl
 
     {:ok, _} =
-      Redix.transaction_pipeline(pid, [["ZADD", "members" <> infohash, "#{expiry}", bin]])
+      Redix.transaction_pipeline(pid, [
+        ["ZADD", Enum.join(["announced", cluster], "-"), "GT", "CH", "#{expiry}", infohash]
+      ])
 
     :ok
   end
 
-  def put_value(pid, key, value, ttl) do
+  def has_announced_cluster(pid, cluster, infohash) do
+    ret =
+      Redix.transaction_pipeline(pid, [
+        ["ZSCORE", Enum.join(["announced", cluster], "-"), infohash]
+      ])
+
+    case ret do
+      {:ok, nil} -> false
+      {:ok, _} -> true
+      e -> e
+    end
+  end
+
+  def put(pid, cluster, infohash, ip, port, ttl) do
+    expiry = :os.system_time(:millisecond) + ttl
+    bin = :erlang.term_to_binary({ip, port})
+
+    {:ok, _} =
+      Redix.transaction_pipeline(pid, [
+        ["ZADD", Enum.join(["members", cluster, infohash], "-"), "CH", "#{expiry}", bin]
+      ])
+
+    :ok
+  end
+
+  def put_value(pid, _cluster, key, value, ttl) do
     {:ok, _} =
       case ttl do
         -1 ->
@@ -50,36 +75,37 @@ defmodule CrissCross.DHTStorage.DHTRedis do
         _ ->
           Redix.transaction_pipeline(pid, [
             ["SET", "values" <> key, value],
-            ["EXPIRE", "mykey", "#{div(ttl, 1000)}"]
+            ["EXPIRE", key, "#{div(ttl, 1000)}"]
           ])
       end
 
     :ok
   end
 
-  def put_name(pid, name, value, generation, signature, ttl) do
+  def put_name(pid, cluster, name, value, generation, signature, ttl) do
     bin = :erlang.term_to_binary({value, generation, signature})
+    key = Enum.join(["names", cluster, name], "-")
 
     {:ok, _} =
       case ttl do
         -1 ->
-          Redix.transaction_pipeline(pid, [["SET", "names" <> name, bin]])
+          Redix.transaction_pipeline(pid, [["SET", key, bin]])
 
         _ ->
           Redix.transaction_pipeline(pid, [
-            ["SET", "names" <> name, bin],
-            ["EXPIRE", "mykey", "#{div(ttl, 1000)}"]
+            ["SET", key, bin],
+            ["EXPIRE", key, "#{div(ttl, 1000)}"]
           ])
       end
 
     :ok
   end
 
-  def has_nodes_for_infohash?(pid, infohash) do
+  def has_nodes_for_infohash?(pid, cluster, infohash) do
     {:ok, exists} =
       Redix.command(pid, [
         "ZCOUNT",
-        "members" <> infohash,
+        Enum.join(["members", cluster, infohash], "-"),
         "#{:os.system_time(:millisecond)}",
         "+inf"
       ])
@@ -87,25 +113,25 @@ defmodule CrissCross.DHTStorage.DHTRedis do
     exists > 0
   end
 
-  def get_nodes(pid, infohash) do
+  def get_nodes(pid, cluster, infohash) do
     {:ok, vals} =
       Redix.command(pid, [
         "ZRANGEBYSCORE",
-        "members" <> infohash,
+        Enum.join(["members", cluster, infohash], "-"),
         "#{:os.system_time(:millisecond)}",
         "+inf"
       ])
 
-    vals
+    vals |> Enum.map(&:erlang.binary_to_term/1)
   end
 
-  def get_value(pid, infohash) do
+  def get_value(pid, _cluster, infohash) do
     {:ok, val} = Redix.command(pid, ["GET", "values" <> infohash])
     val
   end
 
-  def get_name(pid, infohash) do
-    {:ok, val} = Redix.command(pid, ["GET", "names" <> infohash])
+  def get_name(pid, cluster, infohash) do
+    {:ok, val} = Redix.command(pid, ["GET", Enum.join(["names", cluster, infohash], "-")])
 
     case val do
       nil -> nil
@@ -120,6 +146,7 @@ defmodule CrissCross.DHTStorage.DHTRedis do
     Process.send_after(self(), :review_storage, @review_time)
 
     :ok = scan_keys(conn, "0")
+    :ok = scan_announce(conn, "0")
 
     {:noreply, state}
   end
@@ -130,14 +157,14 @@ defmodule CrissCross.DHTStorage.DHTRedis do
         "SCAN",
         agg,
         "MATCH",
-        "members*"
+        "members-*"
       ])
 
-    for infohash <- infohashes do
+    for key <- infohashes do
       {:ok, _val} =
         Redix.command(conn, [
           "ZREMRANGEBYSCORE",
-          "members" <> infohash,
+          key,
           "-inf",
           "(#{:os.system_time(:millisecond)}"
         ])
@@ -146,6 +173,31 @@ defmodule CrissCross.DHTStorage.DHTRedis do
     case new_agg do
       "0" -> :ok
       _ -> scan_keys(conn, new_agg)
+    end
+  end
+
+  def scan_announce(conn, agg) do
+    {:ok, [new_agg, infohashes]} =
+      Redix.command(conn, [
+        "SCAN",
+        agg,
+        "MATCH",
+        "announced-*"
+      ])
+
+    for key <- infohashes do
+      {:ok, _val} =
+        Redix.command(conn, [
+          "ZREMRANGEBYSCORE",
+          key,
+          "-inf",
+          "(#{:os.system_time(:millisecond)}"
+        ])
+    end
+
+    case new_agg do
+      "0" -> :ok
+      _ -> scan_announce(conn, new_agg)
     end
   end
 end

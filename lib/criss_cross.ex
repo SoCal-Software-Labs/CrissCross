@@ -19,6 +19,8 @@ defmodule CrissCross do
 
   alias CrissCross.ConnectionCache
 
+  require Logger
+
   @value CubDB.Btree.__value__()
   @deleted CubDB.Btree.__deleted__()
   @leaf CubDB.Btree.__leaf__()
@@ -27,9 +29,7 @@ defmodule CrissCross do
   defdelegate encode_human(item), to: CrissCrossDHT.Server.Utils, as: :encode_human
   defdelegate decode_human!(item), to: CrissCrossDHT.Server.Utils, as: :decode_human!
 
-  def stream_db(conn, tree_hash) do
-    {:ok, store} = CrissCross.Store.Local.create(conn, tree_hash)
-
+  def stream_db(store) do
     get_children = fn
       {@value, value} = node, _store ->
         value
@@ -52,9 +52,7 @@ defmodule CrissCross do
     end)
   end
 
-  def stream_concurrent(conn, tree_hash, opts \\ []) do
-    {:ok, store} = CrissCross.Store.Local.create(conn, tree_hash)
-
+  def stream_concurrent(store, opts \\ []) do
     get_children = fn
       {_, locs} = node, store ->
         locs
@@ -64,7 +62,7 @@ defmodule CrissCross do
     end
 
     btree = CubDB.Btree.new(store)
-    root = Task.async(fn -> {nil, btree.root} end)
+    root = fn -> {nil, btree.root} end
 
     Stream.unfold({[], [[root]]}, fn acc ->
       case next_task(acc, store, get_children) do
@@ -135,38 +133,37 @@ defmodule CrissCross do
     {{rest, todo}, n}
   end
 
-  def get_multi(conn, tree_hash, ks) do
-    {:ok, local_store} = CrissCross.Store.Local.create(conn, tree_hash)
+  def sql(local_store, make_store, statements) do
+    CrissCross.GlueSql.run(local_store, make_store, statements)
+  end
+
+  def get_multi(local_store, ks) do
     {:ok, db} = CubDB.start_link(local_store, auto_file_sync: false, auto_compact: false)
     CubDB.get_multi(db, ks)
   end
 
-  def put_multi(conn, tree_hash, kvs) do
-    {:ok, local_store} = CrissCross.Store.Local.create(conn, tree_hash)
+  def put_multi(local_store, kvs) do
     {:ok, db} = CubDB.start_link(local_store, auto_file_sync: false, auto_compact: false)
     :ok = CubDB.put_multi(db, kvs)
     {location, _} = CubDB.Store.get_latest_header(local_store)
     location
   end
 
-  def delete_key(conn, tree_hash, loc) do
-    {:ok, local_store} = CrissCross.Store.Local.create(conn, tree_hash)
+  def delete_key(local_store, loc) do
     {:ok, db} = CubDB.start_link(local_store, auto_file_sync: false, auto_compact: false)
     :ok = CubDB.delete_key(db, loc)
     {location, _} = CubDB.Store.get_latest_header(local_store)
     location
   end
 
-  def fetch(redis_conn, tree, loc) do
-    {:ok, local_store} = CrissCross.Store.Local.create(redis_conn, clean_tree(tree))
+  def fetch(local_store, loc) do
     {:ok, db} = CubDB.start_link(local_store, auto_file_sync: false, auto_compact: false)
-    CubDB.fetch(db, tree, loc)
+    CubDB.fetch(db, loc)
   end
 
-  def has_key?(redis_conn, tree, loc) do
-    {:ok, local_store} = CrissCross.Store.Local.create(redis_conn, clean_tree(tree))
+  def has_key?(local_store, loc) do
     {:ok, db} = CubDB.start_link(local_store, auto_file_sync: false, auto_compact: false)
-    CubDB.has_key?(db, tree, loc)
+    CubDB.has_key?(db, loc)
   end
 
   def find_pointer(cluster, public_key, generation \\ 0) do
@@ -176,30 +173,33 @@ defmodule CrissCross do
     end
   end
 
-  def set_pointer(cluster, private_key, value) do
-    CrissCrossDHT.store_name(cluster, private_key, value, -1)
+  def set_pointer(cluster, private_key, value, ttl) do
+    CrissCrossDHT.store_name(cluster, private_key, value, true, true, ttl)
   end
 
-  def clone(conn, cluster, tree_hash) do
-    peers = find_peers_for_header(cluster, tree_hash)
+  def clone(store, make_store) do
+    stream_concurrent(store)
+    |> Stream.flat_map(fn s ->
+      case s do
+        {_, {:embedded_tree, t}} -> [t]
+        _ -> []
+      end
+    end)
+    |> Stream.map(fn t ->
+      Logger.debug("Cloning embedded #{inspect(t)}")
+      {:ok, store} = make_store.(t)
 
-    case peers do
-      [peer | _] ->
-        {:ok, local_store} = CrissCross.Store.Local.create(conn, tree_hash)
-        copy_tree_from_remote(cluster, peer.ip, peer.port, tree_hash, local_store)
-
-      _ ->
-        :error_no_peers
-    end
+      stream_concurrent(store)
+      |> Stream.run()
+    end)
+    |> Stream.run()
   end
 
-  def byte_size(conn, cluster, tree_hash) do
-    byte_size(conn, cluster, tree_hash, false)
+  def byte_size(local_store, cluster, tree_hash) do
+    byte_size(local_store, cluster, tree_hash, false)
   end
 
-  def byte_size(conn, cluster, tree_hash, false) do
-    {:ok, local_store} = CrissCross.Store.Local.create(conn, tree_hash)
-
+  def byte_size(local_store, cluster, tree_hash, false) do
     case CubDB.Store.get_latest_header(local_store) do
       nil ->
         do_byte_size(cluster, tree_hash, fn remote_conn ->
@@ -211,9 +211,7 @@ defmodule CrissCross do
     end
   end
 
-  def byte_size(_conn, cluster, tree_hash, true) do
-    {:ok, local_store} = CubDB.Store.MerkleStore.create()
-
+  def byte_size(local_store, cluster, tree_hash, true) do
     do_byte_size(cluster, tree_hash, fn remote_conn ->
       CrissCross.Store.CachedRPC.create(remote_conn, tree_hash, local_store)
     end)
@@ -238,13 +236,11 @@ defmodule CrissCross do
     end
   end
 
-  def find_key(conn, cluster, tree_hash, key) do
-    find_key(conn, cluster, tree_hash, key, false)
+  def find_key(local_store, cluster, tree_hash, key) do
+    find_key(local_store, cluster, tree_hash, key, false)
   end
 
-  def find_key(conn, cluster, tree_hash, key, false) do
-    {:ok, local_store} = CrissCross.Store.Local.create(conn, tree_hash)
-
+  def find_key(local_store, cluster, tree_hash, key, false) do
     case CubDB.Store.get_latest_header(local_store) do
       nil ->
         do_lookup_key(cluster, tree_hash, key, fn remote_conn ->
@@ -256,9 +252,7 @@ defmodule CrissCross do
     end
   end
 
-  def find_key(_conn, cluster, tree_hash, key, true) do
-    {:ok, local_store} = CubDB.Store.MerkleStore.create()
-
+  def find_key(local_store, cluster, tree_hash, key, true) do
     do_lookup_key(cluster, tree_hash, key, fn remote_conn ->
       CrissCross.Store.CachedRPC.create(remote_conn, tree_hash, local_store)
     end)
@@ -314,28 +308,38 @@ defmodule CrissCross do
     ret
   end
 
-  def copy_tree_from_remote(cluster, remote_ip, remote_port, tree_hash, local_store) do
-    case ConnectionCache.get_conn(cluster, remote_ip, remote_port) do
-      {:ok, conn} ->
-        {:ok, remote_store} = CrissCross.Store.CachedRPC.create(conn, tree_hash, local_store)
-        btree = CubDB.Btree.new(remote_store)
-
-        fun = fn _, _ -> :ok end
-
-        :ok = Enum.reduce(btree, :ok, fun)
-
-      e ->
-        e
-    end
+  def has_announced(store, cluster, tree_hash) do
+    CrissCrossDHT.has_announced(
+      cluster,
+      tree_hash
+    )
   end
 
-  def announce_have_tree(cluster, tree_hash, local_port) do
+  def announce(store, cluster, tree_hash, local_port, ttl) do
+    {:ok, store} = CrissCross.Store.AnnouncingStore.create(cluster, ttl, store)
+
+    stream_db(store)
+    |> Stream.run()
+
+    CrissCrossDHT.search_announce(
+      cluster,
+      tree_hash,
+      fn node ->
+        :ok
+      end,
+      ttl,
+      local_port
+    )
+  end
+
+  def announce_have_tree(cluster, tree_hash, local_port, ttl) do
     CrissCrossDHT.search_announce(
       cluster,
       tree_hash,
       fn _node ->
         :ok
       end,
+      ttl,
       local_port
     )
   end
@@ -353,8 +357,10 @@ defmodule CrissCross do
             send(task_pid, {task_ref, :done})
 
           {ip, port} ->
-            if not Enum.member?(skip_nodes, node) do
-              send(task_pid, {task_ref, %{ip: ip, port: port}})
+            n = %{ip: ip, port: port}
+
+            if not Enum.member?(skip_nodes, n) do
+              send(task_pid, {task_ref, n})
             end
         end)
 

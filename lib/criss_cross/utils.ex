@@ -1,6 +1,8 @@
 defmodule CrissCross.Utils do
   @crlf_iodata [?\r, ?\n]
 
+  def hash(h), do: CrissCrossDHT.Server.Utils.hash(h)
+
   defdelegate serialize_bert(item), to: :erlang, as: :term_to_binary
 
   @compile {:inline, deserialize_bert: 1}
@@ -9,6 +11,8 @@ defmodule CrissCross.Utils do
   end
 
   @compile {:inline, encode_redis_string: 1}
+  def encode_redis_string("OK"), do: "+OK\r\n"
+
   def encode_redis_string(item) do
     [?$, Integer.to_string(byte_size(item)), @crlf_iodata, item, @crlf_iodata]
   end

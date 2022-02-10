@@ -48,26 +48,36 @@ defmodule CrissCross.ExternalRedis do
   end
 
   defp handle_parse(socket, {:ok, req, left_over}, state) do
-    resp = handle(req, state)
-
-    IO.inspect(resp)
+    {resp, new_state} = handle(req, state)
 
     :gen_tcp.send(socket, resp)
 
     case left_over do
-      "" -> serve(socket, %{continuation: nil}, state)
-      _ -> handle_parse(socket, Redix.Protocol.parse(left_over), state)
+      "" -> serve(socket, %{continuation: nil}, new_state)
+      _ -> handle_parse(socket, Redix.Protocol.parse(left_over), new_state)
     end
   end
 
-  def handle(["GET", loc], %{local_store: local_store}) do
-    case CubDB.Store.get_node(local_store, loc) do
-      nil ->
-        "$-1\r\n"
+  def handle(["AUTH", cluster, _], state) do
+    {encode_string("OK"), Map.put(state, :cluster, cluster)}
+  end
 
-      val ->
-        bin = :erlang.term_to_binary(val)
-        encode_string(bin)
+  def handle(["PING"], state) do
+    {encode_string("PONG"), state}
+  end
+
+  def handle(["GET", loc], %{cluster: cluster, local_store: local_store} = state) do
+    if CrissCross.has_announced(local_store, cluster, loc) do
+      case CubDB.Store.get_node(local_store, loc) do
+        nil ->
+          {"$-1\r\n", state}
+
+        val ->
+          bin = :erlang.term_to_binary(val)
+          {encode_string(bin), state}
+      end
+    else
+      {"$-1\r\n", state}
     end
   end
 

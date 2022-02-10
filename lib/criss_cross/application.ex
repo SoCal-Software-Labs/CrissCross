@@ -63,7 +63,10 @@ defmodule CrissCross.Application do
         id: :external_redis
       ),
       Supervisor.child_spec(
-        {Task, fn -> CrissCross.InternalRedis.accept(internal_tcp_port, redis_url) end},
+        {Task,
+         fn ->
+           CrissCross.InternalRedis.accept(internal_tcp_port, external_tcp_port, redis_url)
+         end},
         restart: :permanent,
         id: :internal_redis
       ),

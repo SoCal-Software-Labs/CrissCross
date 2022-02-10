@@ -88,7 +88,7 @@ defimpl CubDB.Store, for: CrissCross.Store.Local do
       header_loc ->
         case get_node(local, header_loc) do
           nil -> nil
-          value -> {header_loc, value |> IO.inspect()}
+          value -> {header_loc, value}
         end
     end
   end
