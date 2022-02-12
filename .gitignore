@@ -24,3 +24,9 @@ iron_cub-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+/names/
+
+/clusters/
+
+/__pycache__/

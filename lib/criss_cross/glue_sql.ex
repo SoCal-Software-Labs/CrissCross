@@ -7,7 +7,7 @@ defmodule CrissCross.GlueSql do
     end
 
     def handle_call(:location, _, state) do
-      {location, _} = CubDB.Store.get_latest_header(state.trees.store)
+      {{_, location}, _} = CubDB.Store.get_latest_header(state.trees.store)
       {:reply, location, state}
     end
 
@@ -16,7 +16,7 @@ defmodule CrissCross.GlueSql do
       k = :binary.list_to_bin(k)
 
       case Btree.fetch(state.trees, table) do
-        {:ok, {:embedded_tree, tree_hash}} ->
+        {:ok, {:embedded_tree, tree_hash, _}} ->
           {:ok, store} = state.make_store.(tree_hash)
           tree = CubDB.Btree.new(store)
 
@@ -36,7 +36,7 @@ defmodule CrissCross.GlueSql do
       table = :binary.list_to_bin(table)
 
       case Btree.fetch(state.trees, table) do
-        {:ok, {:embedded_tree, tree_hash}} ->
+        {:ok, {:embedded_tree, tree_hash, _}} ->
           {:ok, store} = state.make_store.(tree_hash)
           tree = CubDB.Btree.new(store)
 
@@ -48,14 +48,15 @@ defmodule CrissCross.GlueSql do
             end)
             |> Btree.commit()
 
-          {location, _} = CubDB.Store.get_latest_header(store)
+          {{_, location}, _} = CubDB.Store.get_latest_header(store)
           CrissCross.GlueSql.receive_result(ref, true, true, "", location)
 
           {:noreply,
            %{
              state
              | :trees =>
-                 Btree.insert(state.trees, table, {:embedded_tree, location}) |> Btree.commit()
+                 Btree.insert(state.trees, table, {:embedded_tree, location, nil})
+                 |> Btree.commit()
            }}
 
         _ ->
@@ -70,14 +71,15 @@ defmodule CrissCross.GlueSql do
             end)
             |> Btree.commit()
 
-          {location, _} = CubDB.Store.get_latest_header(store)
+          {{_, location}, _} = CubDB.Store.get_latest_header(store)
           CrissCross.GlueSql.receive_result(ref, true, true, "", location)
 
           {:noreply,
            %{
              state
              | :trees =>
-                 Btree.insert(state.trees, table, {:embedded_tree, location}) |> Btree.commit()
+                 Btree.insert(state.trees, table, {:embedded_tree, location, nil})
+                 |> Btree.commit()
            }}
       end
     end
@@ -86,7 +88,7 @@ defmodule CrissCross.GlueSql do
       table = :binary.list_to_bin(table)
 
       case Btree.fetch(state.trees, table) do
-        {:ok, {:embedded_tree, tree_hash}} ->
+        {:ok, {:embedded_tree, tree_hash, _}} ->
           {:ok, store} = state.make_store.(tree_hash)
           tree = CubDB.Btree.new(store)
 
@@ -97,14 +99,15 @@ defmodule CrissCross.GlueSql do
             end)
             |> Btree.commit()
 
-          {location, _} = CubDB.Store.get_latest_header(store)
+          {{_, location}, _} = CubDB.Store.get_latest_header(store)
           CrissCross.GlueSql.receive_result(ref, true, true, "", location)
 
           {:noreply,
            %{
              state
              | :trees =>
-                 Btree.insert(state.trees, table, {:embedded_tree, location}) |> Btree.commit()
+                 Btree.insert(state.trees, table, {:embedded_tree, location, nil})
+                 |> Btree.commit()
            }}
 
         _ ->
@@ -117,7 +120,7 @@ defmodule CrissCross.GlueSql do
       table = :binary.list_to_bin(table)
 
       case Btree.fetch(state.trees, table) do
-        {:ok, {:embedded_tree, tree_hash}} ->
+        {:ok, {:embedded_tree, tree_hash, _}} ->
           {:ok, store} = state.make_store.(tree_hash)
           tree = CubDB.Btree.new(store)
 
@@ -186,11 +189,11 @@ defmodule CrissCross.GlueSql do
 
   def test(hash \\ nil) do
     {:ok, conn} = Redix.start_link("redis://localhost:6379")
-    {:ok, store} = CrissCross.Store.Local.create(conn, nil)
+    {:ok, store} = CrissCross.Store.Local.create(conn, nil, false)
 
     run(
       store,
-      fn hash -> CrissCross.Store.Local.create(conn, hash) end,
+      fn hash -> CrissCross.Store.Local.create(conn, hash, false) end,
       [
         # "DROP TABLE IF EXISTS Glue;",
         # "CREATE TABLE Glue (id INTEGER);",

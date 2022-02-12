@@ -44,7 +44,7 @@ defimpl CubDB.Store, for: CubDB.Store.MerkleStore do
       agent,
       fn {map, latest_header_loc} ->
         loc = :crypto.hash(:blake2b, :erlang.term_to_binary(node))
-        {loc, {Map.put(map, loc, node), latest_header_loc}}
+        {{0, loc}, {Map.put(map, loc, node), latest_header_loc}}
       end,
       :infinity
     )
@@ -55,7 +55,7 @@ defimpl CubDB.Store, for: CubDB.Store.MerkleStore do
       agent,
       fn {map, _} ->
         loc = :crypto.hash(:blake2b, :erlang.term_to_binary(header))
-        {loc, {Map.put(map, loc, header), loc}}
+        {{0, loc}, {Map.put(map, loc, header), loc}}
       end,
       :infinity
     )
@@ -63,7 +63,7 @@ defimpl CubDB.Store, for: CubDB.Store.MerkleStore do
 
   def sync(%MerkleStore{}), do: :ok
 
-  def get_node(%MerkleStore{agent: agent}, location) do
+  def get_node(%MerkleStore{agent: agent}, {0, location}) do
     case Agent.get(
            agent,
            fn {map, _} ->
@@ -81,7 +81,7 @@ defimpl CubDB.Store, for: CubDB.Store.MerkleStore do
       agent,
       fn
         {_, nil} -> nil
-        {map, header_loc} -> {header_loc, Map.get(map, header_loc)}
+        {map, header_loc} -> {{0, header_loc}, Map.get(map, header_loc)}
       end,
       :infinity
     )

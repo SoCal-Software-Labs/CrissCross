@@ -1,18 +1,27 @@
 defmodule CrissCross.Utils do
+  defmodule DecoderError do
+    defexception message: "error decoding BERT"
+  end
+
   @crlf_iodata [?\r, ?\n]
 
-  def hash(h), do: CrissCrossDHT.Server.Utils.hash(h)
+  import CrissCrossDHT.Server.Utils, only: [encrypt: 2, decrypt: 2]
+
+  defdelegate hash(h), to: CrissCrossDHT.Server.Utils, as: :hash
 
   defdelegate serialize_bert(item), to: :erlang, as: :term_to_binary
 
   @compile {:inline, deserialize_bert: 1}
   def deserialize_bert(item) do
-    :erlang.binary_to_term(item, [:safe])
+    try do
+      :erlang.binary_to_term(item, [:safe])
+    rescue
+      ArgumentError ->
+        raise DecoderError
+    end
   end
 
   @compile {:inline, encode_redis_string: 1}
-  def encode_redis_string("OK"), do: "+OK\r\n"
-
   def encode_redis_string(item) do
     [?$, Integer.to_string(byte_size(item)), @crlf_iodata, item, @crlf_iodata]
   end
@@ -23,4 +32,39 @@ defmodule CrissCross.Utils do
   end
 
   defdelegate encode_redis_list(item), to: Redix.Protocol, as: :pack
+
+  def new_challenge_token() do
+    :rand.seed(:exs64, :os.timestamp())
+
+    s =
+      Stream.repeatedly(fn -> :rand.uniform(255) end)
+      |> Enum.take(40)
+      |> :binary.list_to_bin()
+
+    hash(s)
+  end
+
+  def decrypt_cluster_message(cluster_id, msg) do
+    case get_cluster_secret(cluster_id) do
+      %{cypher: cypher} ->
+        decrypt(msg, cypher)
+
+      e ->
+        e
+    end
+  end
+
+  def encrypt_cluster_message(cluster_id, msg) do
+    case get_cluster_secret(cluster_id) do
+      %{cypher: cypher} ->
+        encrypt(cypher, msg)
+
+      e ->
+        e
+    end
+  end
+
+  def get_cluster_secret(cluster_id) do
+    Agent.get(CrissCross.ClusterConfigs, fn clusters -> Map.get(clusters, cluster_id) end)
+  end
 end

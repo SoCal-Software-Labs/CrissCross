@@ -82,8 +82,8 @@ defmodule CrissCross.DHTStorage.DHTRedis do
     :ok
   end
 
-  def put_name(pid, cluster, name, value, generation, signature, ttl) do
-    bin = :erlang.term_to_binary({value, generation, signature})
+  def put_name(pid, cluster, name, value, generation, public_key, signature, ttl) do
+    bin = :erlang.term_to_binary({value, generation, public_key, signature})
     key = Enum.join(["names", cluster, name], "-")
 
     {:ok, _} =

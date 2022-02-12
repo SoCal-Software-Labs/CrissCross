@@ -66,7 +66,7 @@ defimpl CubDB.Store, for: CrissCross.Store.AnnouncingStore do
       nil ->
         nil
 
-      {location, header} = e ->
+      {{_, location}, header} = e ->
         CrissCrossDHT.cluster_announce(cluster, location, ttl)
         e
     end

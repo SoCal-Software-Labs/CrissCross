@@ -31,7 +31,8 @@ defmodule CrissCross.MixProject do
       {:b58, "~> 1.0.2"},
       {:cachex, "~> 3.4.0"},
       {:crisscrossdht, path: "../MlDHT"},
-      {:rustler, "~> 0.23.0"}
+      {:rustler, "~> 0.23.0"},
+      {:yaml_elixir, "~> 2.8"}
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]

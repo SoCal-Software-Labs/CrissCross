@@ -3,18 +3,32 @@ defmodule CrissCross.Store.Local do
 
   # `CubDB.Store.Local` is an implementation of the `Store` protocol
 
-  defstruct conn: nil, tree_hash_pid: nil
+  defstruct conn: nil, tree_hash_pid: nil, readonly: nil, node_count_pid: nil
   alias CrissCross.Store.Local
+  import CrissCross.Utils
 
-  def create(conn, tree_hash) do
+  def create(conn, tree_hash, readonly) do
     {:ok, pid} = Agent.start_link(fn -> tree_hash end)
-    {:ok, %Local{conn: conn, tree_hash_pid: pid}}
+
+    local = %Local{conn: conn, tree_hash_pid: pid, node_count_pid: nil, readonly: readonly}
+
+    count =
+      case CubDB.Store.get_latest_header(local) do
+        {_, {_, {count, _}, _} = n} ->
+          count + byte_size(serialize_bert(n))
+
+        nil ->
+          0
+      end
+
+    {:ok, ncpid} = Agent.start_link(fn -> count end)
+    {:ok, %{local | node_count_pid: ncpid}}
   end
 end
 
 defimpl CubDB.Store, for: CrissCross.Store.Local do
   alias CrissCross.Store.Local
-  alias CrissCross.Utils
+  import CrissCross.Utils
   import Logger
 
   defp get_tree_hash(%Local{tree_hash_pid: tree_hash_pid}) do
@@ -41,31 +55,33 @@ defimpl CubDB.Store, for: CrissCross.Store.Local do
     Store.Local.create()
   end
 
-  def put_node(%Local{conn: conn}, n) do
-    bin = Utils.serialize_bert(n)
-    loc = CrissCrossDHT.Server.Utils.hash(bin)
+  def put_node(%Local{conn: conn, readonly: readonly, node_count_pid: node_count_pid}, n) do
+    bin = serialize_bert(n)
+    loc = hash(bin)
     {:ok, _} = Cachex.put(:node_cache, loc, n)
-    {:ok, "OK"} = Redix.command(conn, ["SET", "nodes" <> loc, bin])
-    loc
+    count = Agent.get_and_update(node_count_pid, fn count -> {count, count + byte_size(bin)} end)
+
+    if not readonly do
+      {:ok, "OK"} = Redix.command(conn, ["SET", "nodes" <> loc, bin])
+    end
+
+    {count, loc}
   end
 
-  def put_header(%Local{conn: conn, tree_hash_pid: tree_hash_pid}, header) do
-    bin = Utils.serialize_bert(header)
-    loc = CrissCrossDHT.Server.Utils.hash(bin)
-    {:ok, _} = Cachex.put(:node_cache, loc, header)
-    {:ok, "OK"} = Redix.command(conn, ["SET", "nodes" <> loc, bin])
+  def put_header(%Local{tree_hash_pid: tree_hash_pid} = local, header) do
+    {_, loc} = location = put_node(local, header)
     :ok = Agent.update(tree_hash_pid, fn _list -> loc end)
-    loc
+    location
   end
 
   def sync(%Local{}), do: :ok
 
-  def get_node(%Local{conn: conn}, location) do
+  def get_node(%Local{conn: conn}, {_, location}) do
     ret =
       Cachex.fetch(:node_cache, location, fn _ ->
         case Redix.command(conn, ["GET", "nodes" <> location]) do
           {:ok, nil} -> {:ignore, nil}
-          {:ok, value} when is_binary(value) -> {:commit, Utils.deserialize_bert(value)}
+          {:ok, value} when is_binary(value) -> {:commit, deserialize_bert(value)}
           _ = e -> {:ignore, e}
         end
       end)
@@ -86,14 +102,15 @@ defimpl CubDB.Store, for: CrissCross.Store.Local do
         nil
 
       header_loc ->
-        case get_node(local, header_loc) do
+        case get_node(local, {0, header_loc}) do
           nil -> nil
-          value -> {header_loc, value}
+          value -> {{0, header_loc}, value}
         end
     end
   end
 
-  def close(%Local{tree_hash_pid: tree_hash_pid}) do
+  def close(%Local{tree_hash_pid: tree_hash_pid, node_count_pid: node_count_pid}) do
+    :ok = Agent.stop(node_count_pid)
     Agent.stop(tree_hash_pid)
   end
 

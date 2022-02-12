@@ -10,6 +10,10 @@ defmodule CrissCross.Scanner do
     GenServer.start_link(__MODULE__, [btree, reverse, min_key, max_key])
   end
 
+  def next(pid) do
+    GenServer.call(pid, :next)
+  end
+
   def init([btree, reverse, min_key, max_key]) do
     root = fn -> {nil, btree.root} end
 
@@ -22,6 +26,24 @@ defmodule CrissCross.Scanner do
        min_key: min_key,
        max_key: max_key
      }}
+  end
+
+  def handle_call(:next, _, %{completed: true} = state) do
+    {:stop, :normal, :done, state}
+  end
+
+  def handle_call(
+        :next,
+        _,
+        %{store: store, node: n, min_key: min_key, max_key: max_key, reverse: reverse} = state
+      ) do
+    case CrissCross.next_node(n, store, &get_children(min_key, max_key, reverse, &1, &2)) do
+      :done ->
+        {:stop, :normal, :done, %{state | node: nil, completed: true}}
+
+      {t, {k, value} = item} ->
+        {:reply, item, %{state | node: t}}
+    end
   end
 
   def handle_info(

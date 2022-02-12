@@ -145,14 +145,14 @@ defmodule CrissCross do
   def put_multi(local_store, kvs) do
     {:ok, db} = CubDB.start_link(local_store, auto_file_sync: false, auto_compact: false)
     :ok = CubDB.put_multi(db, kvs)
-    {location, _} = CubDB.Store.get_latest_header(local_store)
+    {{_, location}, _} = CubDB.Store.get_latest_header(local_store)
     location
   end
 
   def delete_key(local_store, loc) do
     {:ok, db} = CubDB.start_link(local_store, auto_file_sync: false, auto_compact: false)
     :ok = CubDB.delete_key(db, loc)
-    {location, _} = CubDB.Store.get_latest_header(local_store)
+    {{_, location}, _} = CubDB.Store.get_latest_header(local_store)
     location
   end
 
@@ -181,7 +181,7 @@ defmodule CrissCross do
     stream_concurrent(store)
     |> Stream.flat_map(fn s ->
       case s do
-        {_, {:embedded_tree, t}} -> [t]
+        {_, {:embedded_tree, t, _}} -> [t]
         _ -> []
       end
     end)
