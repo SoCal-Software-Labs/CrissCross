@@ -21,7 +21,7 @@ def encode(raw):
 def read_var(t):
     if not t:
         return ""
-    if t == "*default_cluster":
+    if t == "*defaultcluster":
         return base58.b58decode("8ZEftKHKUhq1hfxvx7HPxjZKffDhPku12Ck1nhczysxQ")
     elif t.startswith("*"):
         parts = t.split("#")
@@ -43,7 +43,7 @@ def print_ret(ret):
         print(base58.b58encode(ret).decode("utf8"))
 
 
-class CrissCrossClient:
+class CrissCross:
     def __init__(self, host="localhost", port=11111, **kwargs):
         self.conn = redis.Redis(host=host, port=port, **kwargs)
 
@@ -470,7 +470,7 @@ class CrissCrossClient:
                 with open(i, "rb") as f:
                     loc = self.upload(f, chunk_size)
                     files.append(
-                        (str(i), (erlang.OtpErlangAtom(b"embedded_tree"), loc, None))
+                        (str(i), (erlang.Atom(b"embedded_tree"), loc, None))
                     )
         return r.put_multi(tree, files)
 

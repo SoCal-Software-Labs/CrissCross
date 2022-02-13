@@ -60,13 +60,13 @@ else:
         """
         return ord(character)
 
-__all__ = ['OtpErlangAtom',
-           'OtpErlangBinary',
-           'OtpErlangFunction',
-           'OtpErlangList',
-           'OtpErlangPid',
-           'OtpErlangPort',
-           'OtpErlangReference',
+__all__ = ['Atom',
+           'Binary',
+           'Function',
+           'List',
+           'Pid',
+           'Port',
+           'Reference',
            'binary_to_term',
            'term_to_binary',
            'InputException',
@@ -108,9 +108,9 @@ _TAG_SMALL_ATOM_UTF8_EXT = 119
 
 # Erlang term classes listed alphabetically
 
-class OtpErlangAtom(object):
+class Atom(object):
     """
-    OtpErlangAtom
+    Atom
     """
     # pylint: disable=too-few-public-methods
     def __init__(self, value):
@@ -156,9 +156,9 @@ class OtpErlangAtom(object):
     def __eq__(self, other):
         return self.binary() == other.binary()
 
-class OtpErlangBinary(object):
+class Binary(object):
     """
-    OtpErlangBinary
+    Binary
     """
     # pylint: disable=too-few-public-methods
     def __init__(self, value, bits=8):
@@ -195,9 +195,9 @@ class OtpErlangBinary(object):
     def __eq__(self, other):
         return self.binary() == other.binary()
 
-class OtpErlangFunction(object):
+class Function(object):
     """
-    OtpErlangFunction
+    Function
     """
     # pylint: disable=too-few-public-methods
     def __init__(self, tag, value):
@@ -218,9 +218,9 @@ class OtpErlangFunction(object):
     def __eq__(self, other):
         return self.binary() == other.binary()
 
-class OtpErlangList(object):
+class List(object):
     """
-    OtpErlangList
+    List
     """
     # pylint: disable=too-few-public-methods
     def __init__(self, value, improper=False):
@@ -262,9 +262,9 @@ class OtpErlangList(object):
     def __eq__(self, other):
         return self.binary() == other.binary()
 
-class OtpErlangPid(object):
+class Pid(object):
     """
-    OtpErlangPid
+    Pid
     """
     # pylint: disable=too-few-public-methods
     def __init__(self, node, id_value, serial, creation):
@@ -301,9 +301,9 @@ class OtpErlangPid(object):
     def __eq__(self, other):
         return self.binary() == other.binary()
 
-class OtpErlangPort(object):
+class Port(object):
     """
-    OtpErlangPort
+    Port
     """
     # pylint: disable=too-few-public-methods
     def __init__(self, node, id_value, creation):
@@ -338,9 +338,9 @@ class OtpErlangPort(object):
     def __eq__(self, other):
         return self.binary() == other.binary()
 
-class OtpErlangReference(object):
+class Reference(object):
     """
-    OtpErlangReference
+    Reference
     """
     # pylint: disable=too-few-public-methods
     def __init__(self, node, id_value, creation):
@@ -497,7 +497,7 @@ def _binary_to_term(i, data):
         i += 1
         return (i + j, data[i:i + j])
     elif tag == _TAG_ATOM_CACHE_REF:
-        return (i + 1, OtpErlangAtom(b_ord(data[i])))
+        return (i + 1, Atom(b_ord(data[i])))
     elif tag == _TAG_SMALL_INTEGER_EXT:
         return (i + 1, b_ord(data[i]))
     elif tag == _TAG_INTEGER_EXT:
@@ -516,7 +516,7 @@ def _binary_to_term(i, data):
         elif atom_name == b'nil':
             return (i + j, None)
 
-        return (i + j, OtpErlangAtom(atom_name))
+        return (i + j, Atom(atom_name))
     elif (tag == _TAG_NEW_PORT_EXT or
           tag == _TAG_REFERENCE_EXT or tag == _TAG_PORT_EXT):
         i, node = _binary_to_atom(i, data)
@@ -529,9 +529,9 @@ def _binary_to_term(i, data):
             creation = data[i:i + 1]
             i += 1
             if tag == _TAG_REFERENCE_EXT:
-                return (i, OtpErlangReference(node, id_value, creation))
+                return (i, Reference(node, id_value, creation))
         # tag == _TAG_NEW_PORT_EXT or tag == _TAG_PORT_EXT
-        return (i, OtpErlangPort(node, id_value, creation))
+        return (i, Port(node, id_value, creation))
     elif tag == _TAG_NEW_PID_EXT or tag == _TAG_PID_EXT:
         i, node = _binary_to_atom(i, data)
         id_value = data[i:i + 4]
@@ -544,7 +544,7 @@ def _binary_to_term(i, data):
         elif tag == _TAG_PID_EXT:
             creation = data[i:i + 1]
             i += 1
-        return (i, OtpErlangPid(node, id_value, serial, creation))
+        return (i, Pid(node, id_value, serial, creation))
     elif tag == _TAG_SMALL_TUPLE_EXT or tag == _TAG_LARGE_TUPLE_EXT:
         if tag == _TAG_SMALL_TUPLE_EXT:
             length = b_ord(data[i])
@@ -567,7 +567,7 @@ def _binary_to_term(i, data):
         i, tail = _binary_to_term(i, data)
         if not isinstance(tail, list) or tail != []:
             list_value.append(tail)
-            list_value = OtpErlangList(list_value, improper=True)
+            list_value = List(list_value, improper=True)
         return (i, list_value)
     elif tag == _TAG_BINARY_EXT:
         j = struct.unpack(b'>I', data[i:i + 4])[0]
@@ -591,7 +591,7 @@ def _binary_to_term(i, data):
         return (i + j, bignum)
     elif tag == _TAG_NEW_FUN_EXT:
         length = struct.unpack(b'>I', data[i:i + 4])[0]
-        return (i + length, OtpErlangFunction(tag, data[i:i + length]))
+        return (i + length, Function(tag, data[i:i + length]))
     elif tag == _TAG_EXPORT_EXT:
         old_i = i
         i, _ = _binary_to_atom(i, data)
@@ -601,7 +601,7 @@ def _binary_to_term(i, data):
         i += 1
         _ = b_ord(data[i])
         i += 1
-        return (i, OtpErlangFunction(tag, data[old_i:i]))
+        return (i, Function(tag, data[old_i:i]))
     elif tag == _TAG_NEWER_REFERENCE_EXT or tag == _TAG_NEW_REFERENCE_EXT:
         j = struct.unpack(b'>H', data[i:i + 2])[0] * 4
         i += 2
@@ -612,7 +612,7 @@ def _binary_to_term(i, data):
         elif tag == _TAG_NEW_REFERENCE_EXT:
             creation = data[i:i + 1]
             i += 1
-        return (i + j, OtpErlangReference(node, data[i: i + j], creation))
+        return (i + j, Reference(node, data[i: i + j], creation))
     elif tag == _TAG_SMALL_ATOM_EXT:
         j = b_ord(data[i])
         i += 1
@@ -624,7 +624,7 @@ def _binary_to_term(i, data):
             return (i, False)
         elif atom_name == b'nil':
             return (i, None)
-        return (i, OtpErlangAtom(atom_name))
+        return (i, Atom(atom_name))
     elif tag == _TAG_MAP_EXT:
         length = struct.unpack(b'>I', data[i:i + 4])[0]
         i += 4
@@ -635,7 +635,7 @@ def _binary_to_term(i, data):
             if isinstance(key, dict):
                 pairs[frozendict(key)] = value
             elif isinstance(key, list):
-                pairs[OtpErlangList(key)] = value
+                pairs[List(key)] = value
             else:
                 pairs[key] = value
         return (i, pairs)
@@ -648,21 +648,21 @@ def _binary_to_term(i, data):
         i, _ = _binary_to_integer(i, data)
         i, _ = _binary_to_integer(i, data)
         i, _ = _binary_to_term_sequence(i, numfree, data)
-        return (i, OtpErlangFunction(tag, data[old_i:i]))
+        return (i, Function(tag, data[old_i:i]))
     elif tag == _TAG_ATOM_UTF8_EXT:
         j = struct.unpack(b'>H', data[i:i + 2])[0]
         i += 2
         atom_name = TypeUnicode(
             data[i:i + j], encoding='utf-8', errors='strict'
         )
-        return (i + j, OtpErlangAtom(atom_name))
+        return (i + j, Atom(atom_name))
     elif tag == _TAG_SMALL_ATOM_UTF8_EXT:
         j = b_ord(data[i])
         i += 1
         atom_name = TypeUnicode(
             data[i:i + j], encoding='utf-8', errors='strict'
         )
-        return (i + j, OtpErlangAtom(atom_name))
+        return (i + j, Atom(atom_name))
     elif tag == _TAG_COMPRESSED_ZLIB:
         size_uncompressed = struct.unpack(b'>I', data[i:i + 4])[0]
         if size_uncompressed == 0:
@@ -710,7 +710,7 @@ def _binary_to_pid(i, data):
         i += 4
         creation = data[i:i + 4]
         i += 4
-        return (i, OtpErlangPid(node, id_value, serial, creation))
+        return (i, Pid(node, id_value, serial, creation))
     elif tag == _TAG_PID_EXT:
         i, node = _binary_to_atom(i, data)
         id_value = data[i:i + 4]
@@ -719,7 +719,7 @@ def _binary_to_pid(i, data):
         i += 4
         creation = data[i:i + 1]
         i += 1
-        return (i, OtpErlangPid(node, id_value, serial, creation))
+        return (i, Pid(node, id_value, serial, creation))
     else:
         raise ParseException('invalid pid tag')
 
@@ -729,27 +729,27 @@ def _binary_to_atom(i, data):
     if tag == _TAG_ATOM_EXT:
         j = struct.unpack(b'>H', data[i:i + 2])[0]
         i += 2
-        return (i + j, OtpErlangAtom(data[i:i + j]))
+        return (i + j, Atom(data[i:i + j]))
     elif tag == _TAG_ATOM_CACHE_REF:
-        return (i + 1, OtpErlangAtom(b_ord(data[i])))
+        return (i + 1, Atom(b_ord(data[i])))
     elif tag == _TAG_SMALL_ATOM_EXT:
         j = b_ord(data[i])
         i += 1
-        return (i + j, OtpErlangAtom(data[i:i + j]))
+        return (i + j, Atom(data[i:i + j]))
     elif tag == _TAG_ATOM_UTF8_EXT:
         j = struct.unpack(b'>H', data[i:i + 2])[0]
         i += 2
         atom_name = TypeUnicode(
             data[i:i + j], encoding='utf-8', errors='strict'
         )
-        return (i + j, OtpErlangAtom(atom_name))
+        return (i + j, Atom(atom_name))
     elif tag == _TAG_SMALL_ATOM_UTF8_EXT:
         j = b_ord(data[i])
         i += 1
         atom_name = TypeUnicode(
             data[i:i + j], encoding='utf-8', errors='strict'
         )
-        return (i + j, OtpErlangAtom(atom_name))
+        return (i + j, Atom(atom_name))
     else:
         raise ParseException('invalid atom tag')
 
@@ -759,17 +759,17 @@ def _term_to_binary(term):
     # pylint: disable=too-many-return-statements
     # pylint: disable=too-many-branches
     if isinstance(term, bytes):
-        return OtpErlangBinary(term).binary()
+        return Binary(term).binary()
     elif isinstance(term, TypeUnicode):
-        return OtpErlangBinary(
+        return Binary(
             term.encode(encoding='utf-8', errors='strict')
         ).binary()
     elif isinstance(term, list):
-        return OtpErlangList(term).binary()
+        return List(term).binary()
     elif isinstance(term, tuple):
         return _tuple_to_binary(term)
     elif isinstance(term, bool):
-        return OtpErlangAtom(term and b'true' or b'false').binary()
+        return Atom(term and b'true' or b'false').binary()
     elif isinstance(term, (int, TypeLong)):
         return _long_to_binary(term)
     elif isinstance(term, float):
@@ -777,20 +777,20 @@ def _term_to_binary(term):
     elif isinstance(term, dict):
         return _dict_to_binary(term)
     elif term is None:
-        return OtpErlangAtom(b'nil').binary()
-    elif isinstance(term, OtpErlangAtom):
+        return Atom(b'nil').binary()
+    elif isinstance(term, Atom):
         return term.binary()
-    elif isinstance(term, OtpErlangList):
+    elif isinstance(term, List):
         return term.binary()
-    elif isinstance(term, OtpErlangBinary):
+    elif isinstance(term, Binary):
         return term.binary()
-    elif isinstance(term, OtpErlangFunction):
+    elif isinstance(term, Function):
         return term.binary()
-    elif isinstance(term, OtpErlangReference):
+    elif isinstance(term, Reference):
         return term.binary()
-    elif isinstance(term, OtpErlangPort):
+    elif isinstance(term, Port):
         return term.binary()
-    elif isinstance(term, OtpErlangPid):
+    elif isinstance(term, Pid):
         return term.binary()
     else:
         raise OutputException('unknown python type')
