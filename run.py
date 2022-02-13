@@ -53,6 +53,9 @@ class CrissCrossClient:
         ret = self.conn.execute_command("CLUSTER")
         return ret[0], ret[1], ret[2], ret[3]
 
+    def push(self, cluster, value, ttl=DEFAULT_TTL):
+        return self.conn.execute_command("PUSH", cluster, value, ttl) == b'OK'
+
     def remote(self, cluster, num_conns, *args):
         return self.conn.execute_command("REMOTE", cluster, num_conns, *args)
 
@@ -67,6 +70,24 @@ class CrissCrossClient:
 
     def var_with(self, var, *args):
         return self.conn.execute_command("VARWITH", var, *args)
+
+    def bytes_written(self, tree):
+        return self.conn.execute_command("BYTESWRITTEN", tree)
+
+    def with_var_bytes_written(self, var):
+        return self.conn.execute_command("WITHVAR", var, "BYTESWRITTEN")
+
+    def remote_bytes_written(self, cluster, tree, num=1, cache=True):
+        s = "REMOTE" if cache else "REMOTENOLOCAL"
+        return self.conn.execute_command(
+            s, cluster, num, "BYTESWRITTEN", tree, num=1, cache=True
+        )
+
+    def with_var_remote_bytes_written(self, var, cluster, num=1, cache=True):
+        s = "REMOTE" if cache else "REMOTENOLOCAL"
+        return self.conn.execute_command(
+            "WITHVAR", var, s, cluster, num, "BYTESWRITTEN"
+        )
 
     def put_multi(self, loc, kvs):
         flat_ls = [encode(item) for tup in kvs for item in tup]
@@ -243,7 +264,7 @@ class CrissCrossClient:
         return r[0], [decode(s) for s in r[1:]]
 
     def announce(self, cluster, loc, ttl=DEFAULT_TTL):
-        return self.conn.execute_command("ANNOUNCE", cluster, loc, str(ttl)) == "OK"
+        return self.conn.execute_command("ANNOUNCE", cluster, loc, str(ttl)) == b"OK"
 
     def has_announced(self, cluster, loc):
         return self.conn.execute_command("HASANNOUNCED", cluster, loc) == 1
@@ -259,21 +280,49 @@ class CrissCrossClient:
         )
 
     def iter_start(self, loc):
-        return self.conn.execute_command("ITERSTART", loc) == "OK"
+        ret = self.conn.execute_command("ITERSTART", loc) == b"OK"
+        if ret:
+            while True:
+                s = r.iter_next()
+                if s is None:
+                    break
+                else:
+                    yield s
 
     def with_var_iter_start(self, var):
-        return self.conn.execute_command("WITHVAR", var, "ITERSTART") == "OK"
+        ret = self.conn.execute_command("WITHVAR", var, "ITERSTART") == b"OK"
+        if ret:
+            while True:
+                s = r.iter_next()
+                if s is None:
+                    break
+                else:
+                    yield s
 
     def remote_iter_start(self, cluster, loc, num=1, cache=True):
         s = "REMOTE" if cache else "REMOTENOLOCAL"
-        return self.conn.execute_command(s, cluster, str(num), "ITERSTART", loc) == "OK"
+        ret = self.conn.execute_command(s, cluster, str(num), "ITERSTART", loc) == b"OK"
+        if ret:
+            while True:
+                s = r.iter_next()
+                if s is None:
+                    break
+                else:
+                    yield s
 
     def with_var_remote_iter_start(self, var, cluster, num=1, cache=True):
         s = "REMOTE" if cache else "REMOTENOLOCAL"
-        return (
+        ret = (
             self.conn.execute_command("WITHVAR", var, s, cluster, str(num), "ITERSTART")
-            == "OK"
+            == b"OK"
         )
+        if ret:
+            while True:
+                s = r.iter_next()
+                if s is None:
+                    break
+                else:
+                    yield s
 
     def iter_next(self):
         ret = self.conn.execute_command("ITERNEXT")
@@ -282,29 +331,43 @@ class CrissCrossClient:
         return decode(ret[0]), decode(ret[1])
 
     def iter_stop(self):
-        return self.conn.execute_command("ITERSTOP") == "OK"
+        return self.conn.execute_command("ITERSTOP") == b"OK"
 
     def iter_start_opts(
         self, loc, min_key=None, max_key=None, inc_min=True, inc_max=True, reverse=False
     ):
         mink, maxk, imin, imax = self._make_min_max(min_key, max_key, inc_min, inc_max)
         rev = "true" if reverse else "false"
-        return (
+        ret = (
             self.conn.execute_command("ITERSTART", loc, mink, maxk, imin, imax, rev)
-            == "OK"
+            == b"OK"
         )
+        if ret:
+            while True:
+                s = r.iter_next()
+                if s is None:
+                    break
+                else:
+                    yield s
 
     def with_var_iter_start_opts(
         self, var, min_key=None, max_key=None, inc_min=True, inc_max=True, reverse=False
     ):
         mink, maxk, imin, imax = self._make_min_max(min_key, max_key, inc_min, inc_max)
         rev = "true" if reverse else "false"
-        return (
+        ret = (
             self.conn.execute_command(
                 "WITHVAR", var, "ITERSTART", mink, maxk, imin, imax, rev
             )
-            == "OK"
+            == b"OK"
         )
+        if ret:
+            while True:
+                s = r.iter_next()
+                if s is None:
+                    break
+                else:
+                    yield s
 
     def remote_iter_start_opts(
         self,
@@ -321,12 +384,19 @@ class CrissCrossClient:
         mink, maxk, imin, imax = self._make_min_max(min_key, max_key, inc_min, inc_max)
         rev = "true" if reverse else "false"
         s = "REMOTE" if cache else "REMOTENOLOCAL"
-        return (
+        ret = (
             self.conn.execute_command(
                 s, cluster, str(num), "ITERSTART", loc, mink, maxk, imin, imax, rev
             )
-            == "OK"
+            == b"OK"
         )
+        if ret:
+            while True:
+                s = r.iter_next()
+                if s is None:
+                    break
+                else:
+                    yield s
 
     def with_var_remote_iter_start_opts(
         self,
@@ -343,7 +413,7 @@ class CrissCrossClient:
         mink, maxk, imin, imax = self._make_min_max(min_key, max_key, inc_min, inc_max)
         rev = "true" if reverse else "false"
         s = "REMOTE" if cache else "REMOTENOLOCAL"
-        return (
+        ret = (
             self.conn.execute_command(
                 "WITHVAR",
                 var,
@@ -357,8 +427,15 @@ class CrissCrossClient:
                 imax,
                 rev,
             )
-            == "OK"
+            == b"OK"
         )
+        if ret:
+            while True:
+                s = r.iter_next()
+                if s is None:
+                    break
+                else:
+                    yield s
 
     def _make_min_max(self, min_key, max_key, inc_min, inc_max):
         minkey = ""
@@ -396,79 +473,76 @@ class CrissCrossClient:
         return r.put_multi(tree, files)
 
     def download(self, tree, file_obj):
-        self.iter_start_opts(tree, min_key=0)
-        self._do_download(file_obj)
+        it = self.iter_start_opts(tree, min_key=0)
+        self._do_download(file_obj, it)
 
     def download_dir(self, tree, d):
-        self.iter_start_opts(tree, min_key=0)
-        files = self._dir_files()
+        it = self.iter_start_opts(tree, min_key=0)
+        files = self._dir_files(it)
         for fn, (_, loc, _) in files:
-            self.iter_start_opts(loc, min_key=0)
-            self._download_file_in_dir(d, fn, loc)
+            it = self.iter_start_opts(loc, min_key=0)
+            self._download_file_in_dir(d, fn, loc, it)
 
     def ls(self, tree):
-        self.iter_start_opts(tree, min_key=0)
-        return [k for k, _ in self._dir_files()]
+        it = self.iter_start_opts(tree, min_key=0)
+        return [k for k, _ in self._dir_files(it)]
 
     def with_var_download(self, var, file_obj):
-        self.with_var_iter_start_opts(var, min_key=0)
-        self._do_download(file_obj)
+        it = self.with_var_iter_start_opts(var, min_key=0)
+        self._do_download(file_obj, it)
 
     def remote_download(self, cluster, loc, file_obj, num=1, cache=True):
-        self.remote_iter_start_opts(cluster, loc, min_key=0, num=num, cahce=cache)
-        self._do_download(file_obj)
+        it = self.remote_iter_start_opts(cluster, loc, min_key=0, num=num, cahce=cache)
+        self._do_download(file_obj, it)
 
     def with_var_remote_download(self, var, cluster, file_obj, num=1, cache=True):
-        self.with_var_iter_start_opts(var, cluster, min_key=0, num=num, cahce=cache)
-        self._do_download(file_obj)
+        it = self.with_var_iter_start_opts(
+            var, cluster, min_key=0, num=num, cahce=cache
+        )
+        self._do_download(file_obj, it)
 
     def with_var_download_dir(self, var, file_obj):
-        self.with_var_iter_start_opts(var, min_key=0)
-        files = self._dir_files()
+        it = self.with_var_iter_start_opts(var, min_key=0)
+        files = self._dir_files(it)
         for fn, (_, loc, _) in files:
-            self.iter_start_opts(loc, min_key=0)
-            self._download_file_in_dir(d, fn, loc)
+            it = self.iter_start_opts(loc, min_key=0)
+            self._download_file_in_dir(d, fn, loc, it)
 
     def remote_download_dir(self, cluster, loc, dir, num=1, cache=True):
-        self.remote_iter_start_opts(cluster, loc, min_key=0, num=num, cahce=cache)
-        files = self._dir_files()
+        it = self.remote_iter_start_opts(cluster, loc, min_key=0, num=num, cahce=cache)
+        files = self._dir_files(it)
         for fn, (_, loc, _) in files:
-            self.iter_start_opts(loc, min_key=0, num=num, cahce=cache)
+            it = self.iter_start_opts(loc, min_key=0, num=num, cahce=cache)
             self._download_file_in_dir(d, fn, loc)
 
     def with_var_remote_download_dir(self, var, cluster, dir, num=1, cache=True):
-        self.with_var_iter_start_opts(var, cluster, min_key=0, num=num, cahce=cache)
-        files = self._dir_files()
+        it = self.with_var_iter_start_opts(
+            var, cluster, min_key=0, num=num, cahce=cache
+        )
+        files = self._dir_files(it)
         for fn, (_, loc, _) in files:
-            self.iter_start_opts(loc, min_key=0, num=num, cahce=cache)
-            self._download_file_in_dir(d, fn, loc)
+            it = self.iter_start_opts(loc, min_key=0, num=num, cahce=cache)
+            self._download_file_in_dir(d, fn, it)
 
-    def _dir_files(self):
+    def _dir_files(self, it):
         files = []
-        while True:
-            s = r.iter_next()
-            if s is None:
-                break
-            else:
+        for s in it:
+            if isinstance(s[0], bytes):
                 files.append((s[0], s[1]))
         return files
 
-    def _do_download(self, file_obj):
-        while True:
-            s = r.iter_next()
-            if s is None:
-                break
-            else:
-                if isinstance(s[0], int) and isinstance(s[1], bytes):
-                    file_obj.write(s[1])
+    def _do_download(self, file_obj, it):
+        for s in it:
+            if isinstance(s[0], int) and isinstance(s[1], bytes):
+                file_obj.write(s[1])
 
-    def _download_file_in_dir(self, d, fn, loc):
+    def _download_file_in_dir(self, d, fn, it):
         real_fn = os.path.join(d, fn.decode("utf8"))
         directory = os.path.dirname(real_fn)
         if not os.path.exists(directory):
             os.makedirs(directory)
         with open(real_fn, "wb") as f:
-            self.download(loc, f)
+            self._do_download(f, it)
 
 
 if __name__ == "__main__":
@@ -477,13 +551,14 @@ if __name__ == "__main__":
 
     subparser = subparsers.add_parser("keypair")
     subparser = subparsers.add_parser("cluster")
+    subparser = subparsers.add_parser("node_secret")
 
     subparser = subparsers.add_parser("download_dir")
     subparser.add_argument("tree")
     subparser.add_argument("dir")
 
     parser_upload = subparsers.add_parser("upload_dir")
-    parser_upload.add_argument("--tree", action="store", default=None)
+    parser_upload.add_argument("--tree", default=None)
     parser_upload.add_argument("dir")
 
     parser_upload = subparsers.add_parser("upload")
@@ -498,6 +573,11 @@ if __name__ == "__main__":
 
     subparser = subparsers.add_parser("ls")
     subparser.add_argument("tree")
+
+    subparser = subparsers.add_parser("push")
+    subparser.add_argument("cluster")
+    subparser.add_argument("value")
+    subparser.add_argument("--ttl", type=int, default=DEFAULT_TTL)
 
     subparser = subparsers.add_parser("announce")
     subparser.add_argument("cluster")
@@ -515,6 +595,9 @@ if __name__ == "__main__":
     subparser.add_argument("name")
     subparser.add_argument("--generation", type=int, default=0)
 
+    subparser = subparsers.add_parser("bytes_written")
+    subparser.add_argument("tree")
+
     subparser = subparsers.add_parser("var_set")
     subparser.add_argument("cluster")
     subparser.add_argument("key")
@@ -523,6 +606,7 @@ if __name__ == "__main__":
     subparser = subparsers.add_parser("var_get")
     subparser.add_argument("cluster")
     subparser.add_argument("key")
+
 
     subparser = subparsers.add_parser("put")
     subparser.add_argument("tree")
@@ -541,6 +625,13 @@ if __name__ == "__main__":
     subparser.add_argument("tree")
     subparser.add_argument("key")
 
+    subparser = subparsers.add_parser("remote_bytes_written")
+    subparser.add_argument("cluster")
+    subparser.add_argument("tree")
+    subparser.add_argument("num", type=int, default=1)
+    subparser.add_argument("cache", type=bool, default=True)
+
+
     subparser = subparsers.add_parser("remote_has_key")
     subparser.add_argument("cluster")
     subparser.add_argument("tree")
@@ -554,6 +645,10 @@ if __name__ == "__main__":
     subparser.add_argument("key")
     subparser.add_argument("num", type=int, default=1)
     subparser.add_argument("cache", type=bool, default=True)
+
+    subparser = subparsers.add_parser("with_var_bytes_written")
+    subparser.add_argument("cluster")
+    subparser.add_argument("var")
 
     subparser = subparsers.add_parser("with_var_put")
     subparser.add_argument("var")
@@ -585,6 +680,13 @@ if __name__ == "__main__":
     subparser.add_argument("key")
     subparser.add_argument("num", type=int, default=1)
     subparser.add_argument("cache", type=bool, default=True)
+
+    subparser = subparsers.add_parser("with_var_remote_bytes_written")
+    subparser.add_argument("cluster")
+    subparser.add_argument("var")
+    subparser.add_argument("num", type=int, default=1)
+    subparser.add_argument("cache", type=bool, default=True)
+
 
     args = parser.parse_args()
     host = os.getenv("HOST", "localhost")
@@ -687,6 +789,26 @@ if __name__ == "__main__":
                 args.var, args.key, num=args.num, cache=args.cache
             )
         )
+
+    elif args.command == "bytes_written":
+        print(r.bytes_written(read_var(args.tree)))
+
+    elif args.command == "with_var_bytes_written":
+        print(r.with_var_bytes_written(read_var(args.var)))
+
+    elif args.command == "remote_bytes_written":
+        print(
+            r.remote_bytes_written(
+                args.tree, num=args.num, cache=args.cache
+            )
+        )
+    elif args.command == "with_var_remote_bytes_written":
+        print(
+            r.with_var_remote_bytes_written(
+                args.var, num=args.num, cache=args.cache
+            )
+        )
+
     elif args.command == "keypair":
         ret = r.keypair()
         print(f"Name:       {base58.b58encode(ret[0]).decode('utf8')}")
@@ -698,7 +820,18 @@ if __name__ == "__main__":
         print(f"Cypher:     {base58.b58encode(ret[1]).decode('utf8')}")
         print(f"PublicKey:  {base58.b58encode(ret[2]).decode('utf8')}")
         print(f"PrivateKey: {base58.b58encode(ret[3]).decode('utf8')}")
-
+        print(f"MaxTTL:     {DEFAULT_TTL}")
+    elif args.command == "node_secret":
+        ret = r.keypair()
+        print(base58.b58encode(ret[2]).decode("utf8"))
+    elif args.command == "push":
+        print(
+            r.push(
+                read_var(args.cluster),
+                read_var(args.value),
+                ttl=args.ttl,
+            )
+        )
     # cluster FqcdM9XXWs7dXMPxMNeVCEhSdFk46kAyrNxxeT8V81W7
 
     # loc = r.put_multi_bin("", [("key", "value")])

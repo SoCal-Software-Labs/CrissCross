@@ -191,6 +191,8 @@ defmodule CrissCross do
 
       stream_concurrent(store)
       |> Stream.run()
+
+      CubDB.Store.close(store)
     end)
     |> Stream.run()
   end

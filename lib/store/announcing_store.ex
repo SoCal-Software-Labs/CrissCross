@@ -47,14 +47,14 @@ defimpl CubDB.Store, for: CrissCross.Store.AnnouncingStore do
 
   def get_node(
         %AnnouncingStore{cluster: cluster, ttl: ttl, local_store: local_store} = rpc,
-        location
+        {_, hash} = location
       ) do
     case CubDB.Store.get_node(local_store, location) do
       nil ->
         nil
 
       node ->
-        CrissCrossDHT.cluster_announce(cluster, location, ttl)
+        CrissCrossDHT.cluster_announce(cluster, hash, ttl)
         node
     end
   end

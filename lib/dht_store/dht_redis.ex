@@ -18,6 +18,9 @@ defmodule CrissCross.DHTStorage.DHTRedis do
   ## 30 Minutes
   @node_expired 30 * @min_in_ms
 
+  ## 60 Minutes
+  @node_reannounce 1000 * 60 * @min_in_ms
+
   def start_link(opts) do
     {redis_opts, opts} = Keyword.pop(opts, :redis_opts)
     {:ok, conn} = Redix.start_link(redis_opts, opts)
@@ -31,11 +34,9 @@ defmodule CrissCross.DHTStorage.DHTRedis do
   end
 
   def cluster_announce(pid, cluster, infohash, ttl) do
-    expiry = :os.system_time(:millisecond) + ttl
-
     {:ok, _} =
       Redix.transaction_pipeline(pid, [
-        ["ZADD", Enum.join(["announced", cluster], "-"), "GT", "CH", "#{expiry}", infohash]
+        ["ZADD", Enum.join(["announced", cluster], "-"), "GT", "CH", "#{ttl}", infohash]
       ])
 
     :ok
@@ -55,50 +56,86 @@ defmodule CrissCross.DHTStorage.DHTRedis do
   end
 
   def put(pid, cluster, infohash, ip, port, ttl) do
-    expiry = :os.system_time(:millisecond) + ttl
     bin = :erlang.term_to_binary({ip, port})
 
     {:ok, _} =
       Redix.transaction_pipeline(pid, [
-        ["ZADD", Enum.join(["members", cluster, infohash], "-"), "CH", "#{expiry}", bin]
+        ["ZADD", Enum.join(["members", cluster, infohash], "-"), "CH", "#{ttl}", bin]
       ])
 
     :ok
   end
 
-  def put_value(pid, _cluster, key, value, ttl) do
+  def put_value(pid, cluster, key, value, ttl) do
+    bin = :erlang.term_to_binary({cluster, key, ttl})
+
     {:ok, _} =
       case ttl do
         -1 ->
-          Redix.transaction_pipeline(pid, [["SET", "values" <> key, value]])
+          Redix.transaction_pipeline(pid, [
+            ["SET", Enum.join(["values", cluster, key], "-"), value],
+            ["RPUSH", "values:queue", bin]
+          ])
 
         _ ->
           Redix.transaction_pipeline(pid, [
-            ["SET", "values" <> key, value],
-            ["EXPIRE", key, "#{div(ttl, 1000)}"]
+            ["SET", Enum.join(["values", cluster, key], "-"), value],
+            ["EXPIRE", key, "#{div(ttl, 1000)}"],
+            ["RPUSH", "values:queue", bin]
           ])
       end
 
     :ok
   end
 
-  def put_name(pid, cluster, name, value, generation, public_key, signature, ttl) do
-    bin = :erlang.term_to_binary({value, generation, public_key, signature})
+  def put_name(
+        pid,
+        cluster,
+        name,
+        value,
+        generation,
+        public_key,
+        signature_cluster,
+        signature,
+        ttl
+      ) do
+    bin =
+      :erlang.term_to_binary({value, generation, ttl, public_key, signature_cluster, signature})
+
     key = Enum.join(["names", cluster, name], "-")
+    next_time = :os.system_time(:millisecond) + @node_reannounce + :rand.uniform(@node_reannounce)
+
+    reannounce =
+      if ttl == -1 or ttl > next_time do
+        bin = :erlang.term_to_binary({cluster, name})
+        [["ZADD", "nameclock", "CH", "#{next_time}", bin]]
+      else
+        []
+      end
 
     {:ok, _} =
       case ttl do
         -1 ->
-          Redix.transaction_pipeline(pid, [["SET", key, bin]])
+          Redix.transaction_pipeline(pid, [["SET", key, bin]] ++ reannounce)
 
         _ ->
-          Redix.transaction_pipeline(pid, [
-            ["SET", key, bin],
-            ["EXPIRE", key, "#{div(ttl, 1000)}"]
-          ])
+          Redix.transaction_pipeline(
+            pid,
+            [
+              ["SET", key, bin],
+              ["EXPIRE", key, "#{div(ttl, 1000)}"]
+            ] ++ reannounce
+          )
       end
 
     :ok
+  end
+
+  def refresh_name(pid, cluster, name) do
+    bin = :erlang.term_to_binary({cluster, name})
+    now = :os.system_time(:millisecond)
+    next_time = now + @node_reannounce + :rand.uniform(@node_reannounce)
+    {:ok, _} = Redix.command(pid, ["ZADD", "nameclock", "CH", "#{next_time}", bin])
   end
 
   def has_nodes_for_infohash?(pid, cluster, infohash) do
@@ -125,8 +162,8 @@ defmodule CrissCross.DHTStorage.DHTRedis do
     vals |> Enum.map(&:erlang.binary_to_term/1)
   end
 
-  def get_value(pid, _cluster, infohash) do
-    {:ok, val} = Redix.command(pid, ["GET", "values" <> infohash])
+  def get_value(pid, cluster, infohash) do
+    {:ok, val} = Redix.command(pid, ["GET", Enum.join(["values", cluster, infohash], "-")])
     val
   end
 
@@ -199,5 +236,81 @@ defmodule CrissCross.DHTStorage.DHTRedis do
       "0" -> :ok
       _ -> scan_announce(conn, new_agg)
     end
+  end
+
+  def process_values(conn, callback) do
+    {:ok, next_value} =
+      Redix.command(conn, [
+        "LPOP",
+        "values:queue"
+      ])
+
+    case next_value do
+      bin when is_binary(bin) ->
+        {cluster, hash, ttl} = :erlang.binary_to_term(bin)
+
+        case Redix.command(conn, ["GET", Enum.join(["values", cluster, hash], "-")]) do
+          {:ok, val} when is_binary(val) ->
+            :ok = callback.(cluster, val, ttl)
+            process_values(conn, callback)
+
+          _ ->
+            :ok
+        end
+
+      nil ->
+        :ok
+    end
+  end
+
+  def reannounce_names(conn, worker_pid) do
+    now = :os.system_time(:millisecond)
+
+    {:ok, infohashes} =
+      Redix.command(conn, [
+        "ZRANGE",
+        "nameclock",
+        "-inf",
+        "(#{now}",
+        "BYSCORE"
+      ])
+
+    for bin <- infohashes do
+      {cluster, name} = :erlang.binary_to_term(bin)
+      key = Enum.join(["names", cluster, name], "-")
+
+      case Redix.command(conn, ["GET", key]) do
+        {:ok, b} when is_binary(b) ->
+          {value, generation, ttl, public_key, signature_cluster, signature_name} =
+            :erlang.binary_to_term(b)
+
+          tid = KRPCProtocol.gen_tid()
+
+          Logger.debug(
+            "Reannouncing #{CrissCrossDHT.Server.Utils.encode_human(cluster)} #{CrissCrossDHT.Server.Utils.encode_human(name)}"
+          )
+
+          GenServer.cast(
+            worker_pid,
+            {:broadcast_name, cluster, tid, name, value, ttl, public_key, generation,
+             signature_cluster, signature_name}
+          )
+
+          if ttl > now do
+            refresh_name(conn, cluster, name)
+          end
+
+        _ ->
+          :ok
+      end
+    end
+
+    {:ok, _} =
+      Redix.command(conn, [
+        "ZREMRANGEBYSCORE",
+        "nameclock",
+        "-inf",
+        "(#{:os.system_time(:millisecond)}"
+      ])
   end
 end

@@ -96,15 +96,25 @@ defimpl CubDB.Store, for: CrissCross.Store.Local do
     end
   end
 
-  def get_latest_header(%Local{conn: conn} = local) do
+  def get_latest_header(%Local{conn: conn, node_count_pid: node_count_pid} = local) do
     case get_tree_hash(local) do
       nil ->
         nil
 
       header_loc ->
         case get_node(local, {0, header_loc}) do
-          nil -> nil
-          value -> {{0, header_loc}, value}
+          nil ->
+            nil
+
+          value ->
+            count =
+              if is_nil(node_count_pid) do
+                0
+              else
+                Agent.get(node_count_pid, fn count -> count end)
+              end
+
+            {{count, header_loc}, value}
         end
     end
   end

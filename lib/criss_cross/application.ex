@@ -5,19 +5,38 @@ defmodule CrissCross.Application do
 
   alias CrissCrossDHT.Server.Utils
 
-  @cypher "DEoGUJcJCMKVuHXAmjgNyU6cCrPcHFymd6c7o5i9yVzT"
-  @public_key "2bDkyNhW9LBQH3TB1inDAppeHnbwLbpMTGaZ3ZoD5NzpjQRK24uEnLU"
-  @private_key "wnpv357S2Qtfv89FiHJAaBiiyPSQF86Vx3cpH5jRF8brjGYfegRW7YhdeaitiQfaBYSRR9VwGPiRoAFACNJ8cYbC8RTMyRshZv"
+  @cypher "9YtgMwxnoSagovuViBbJ33drDaPpC6Mc2pVDpMLS8erc"
+  @public_key "2bDkyNhW9LBRtCsH9xuRRKmvWJtL7QjJ3mao1FkDypmn8kmViGsarw4"
+
   @cluster_name Utils.encode_human(Utils.hash(Utils.combine_to_sign([@cypher, @public_key])))
+  @max_default_overlay_ttl 45 * 60 * 60 * 1000
 
   @process_name CrissCrossDHT.Server.Worker
 
   @default_udp 35000
 
   def start(_type, _args) do
-    node_id = Utils.gen_node_id()
+    node_id =
+      case System.get_env("NODE_SECRET", nil) do
+        node_id when is_binary(node_id) ->
+          case Utils.load_private_key(Utils.decode_human!(node_id)) do
+            {:ok, priv} ->
+              {:ok, pub} = ExSchnorr.public_from_private(priv)
+              {:ok, bytes} = ExSchnorr.public_to_bytes(pub)
+              Utils.hash(bytes)
+
+            _ ->
+              raise "Invalid NODE_SECRET"
+          end
+
+        _ ->
+          Utils.gen_node_id()
+      end
 
     CrissCrossDHT.Registry.start()
+
+    bootstrap_overlay =
+      System.get_env("BOOTSTRAP_OVERLAY", @cluster_name) |> Utils.decode_human!()
 
     external_tcp_port = System.get_env("EXTERNAL_TCP_PORT", "35001") |> String.to_integer()
     internal_tcp_port = System.get_env("INTERNAL_TCP_PORT", "35002") |> String.to_integer()
@@ -46,13 +65,20 @@ defmodule CrissCross.Application do
       Path.wildcard("#{cluster_dir}/*.yaml")
       |> Enum.flat_map(fn cluster ->
         case YamlElixir.read_from_string(File.read!(cluster)) do
-          {:ok, %{"Name" => name, "Cypher" => cypher, "PublicKey" => pubk, "PrivateKey" => privk}} ->
+          {:ok,
+           %{
+             "Name" => name,
+             "MaxTTL" => max_ttl,
+             "Cypher" => cypher,
+             "PublicKey" => pubk,
+             "PrivateKey" => privk
+           }} ->
             [
               {name,
                %{
+                 max_ttl: max_ttl,
                  secret: cypher,
-                 public_key: pubk,
-                 private_key: privk
+                 public_key: pubk
                }}
             ]
 
@@ -61,20 +87,30 @@ defmodule CrissCross.Application do
             []
         end
       end)
-      |> Enum.into(%{})
+      |> Enum.into(%{
+        @cluster_name => %{
+          max_ttl: @max_default_overlay_ttl,
+          secret: @cypher,
+          public_key: @public_key
+        }
+      })
 
     dht_config = %{
+      bootstrap_overlay: bootstrap_overlay,
       port: System.get_env("EXTERNAL_UDP_PORT", "#{@default_udp}") |> String.to_integer(),
       ipv4: true,
       ipv6: false,
       clusters: clusters,
       bootstrap_nodes: bootstrap_nodes,
       k_bucket_size: 12,
-      storage: {CrissCross.DHTStorage.DHTRedis, [redis_opts: redis_url]}
+      storage: {CrissCross.DHTStorage.DHTRedis, [redis_opts: redis_url]},
+      process_values_callback: fn cluster, value, ttl ->
+        CrissCross.ValueCloner.queue(cluster, value, ttl)
+      end
     }
 
     children = [
-      Supervisor.child_spec({Cachex, name: :connection_cache}, id: :connection_cache),
+      CrissCross.ConnectionCache,
       Supervisor.child_spec({Cachex, name: :node_cache}, id: :node_cache),
       {Task.Supervisor, name: CrissCross.TaskSupervisor},
       Supervisor.child_spec(
@@ -96,6 +132,7 @@ defmodule CrissCross.Application do
            [fn -> Utils.config(dht_config, :clusters) end, [name: CrissCross.ClusterConfigs]]},
         id: CrissCross.ClusterConfigs
       },
+      {CrissCross.ValueCloner, {redis_url, external_tcp_port}},
       {CrissCrossDHT.Supervisor, node_id: node_id, worker_name: @process_name, config: dht_config}
     ]
 

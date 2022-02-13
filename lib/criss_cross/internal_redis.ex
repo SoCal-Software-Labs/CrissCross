@@ -19,7 +19,8 @@ defmodule CrissCross.InternalRedis do
     "SQL",
     "SQLJSON",
     "ITERSTART",
-    "CLONE"
+    "CLONE",
+    "BYTESWRITTEN"
   ]
 
   @doc """
@@ -223,7 +224,6 @@ defmodule CrissCross.InternalRedis do
         nil -> nil
         k -> {deserialize_bert(k), clean_bool(inc_min)}
       end
-      |> IO.inspect()
 
     maxk =
       case clean_maybe(max_key) do
@@ -347,6 +347,13 @@ defmodule CrissCross.InternalRedis do
       end
     end)
     |> encode_redis_list()
+  end
+
+  def handle_stateless(["BYTESWRITTEN", tree], %{make_store: make_store}) do
+    {:ok, store} = make_store.(clean_maybe(tree))
+    {{loc, _}, _} = Store.get_latest_header(store)
+    Store.close(store)
+    encode_redis_integer(loc)
   end
 
   def handle_stateless(["GETMULTI", tree, loc | locs], %{make_store: make_store}) do
@@ -488,14 +495,18 @@ defmodule CrissCross.InternalRedis do
       }) do
     {:ok, store} = make_store.(clean_maybe(tree))
 
-    case Integer.parse(ttl) do
-      {num, _} ->
-        :ok = CrissCross.announce(store, cluster, tree, external_port, num)
-        "+OK\r\n"
+    ret =
+      case Integer.parse(ttl) do
+        {num, _} when num >= -1 ->
+          :ok = CrissCross.announce(store, cluster, tree, external_port, num)
+          "+OK\r\n"
 
-      _ ->
-        "-Invalid TTL Integer\r\n"
-    end
+        _ ->
+          "-Invalid TTL Integer\r\n"
+      end
+
+    Store.close(store)
+    ret
   end
 
   def handle_stateless(["HASANNOUNCED", cluster, tree], %{
@@ -504,13 +515,17 @@ defmodule CrissCross.InternalRedis do
       }) do
     {:ok, store} = make_store.(clean_maybe(tree))
 
-    case CrissCross.has_announced(store, cluster, tree) do
-      true ->
-        encode_redis_integer(1)
+    ret =
+      case CrissCross.has_announced(store, cluster, tree) do
+        true ->
+          encode_redis_integer(1)
 
-      _ ->
-        encode_redis_integer(0)
-    end
+        _ ->
+          encode_redis_integer(0)
+      end
+
+    Store.close(store)
+    ret
   end
 
   def handle_stateless(["POINTERLOOKUP", cluster, name, generation], _state) do
@@ -522,6 +537,23 @@ defmodule CrissCross.InternalRedis do
           :not_found -> "$-1\r\n"
           {:error, e} -> "-Error setting pointer #{inspect(e)}\r\n"
         end
+
+      _ ->
+        "-Invalid generation\r\n"
+    end
+  end
+
+  def handle_stateless(["PUSH", cluster, tree, ttl], %{
+        external_port: external_port,
+        make_store: make_store
+      }) do
+    case Integer.parse(ttl) do
+      {num, _} when num >= -1 ->
+        {:ok, store} = make_store.(clean_maybe(tree))
+        :ok = CrissCross.announce(store, cluster, tree, external_port, num)
+        CrissCrossDHT.store(cluster, tree, num)
+        Store.close(store)
+        "+OK\r\n"
 
       _ ->
         "-Invalid generation\r\n"
@@ -544,12 +576,10 @@ defmodule CrissCross.InternalRedis do
   end
 
   def handle_stateless(["POINTERSET", cluster, private_key_pem, value, ttl], _state) do
-    IO.inspect(private_key_pem)
-
     case DHTUtils.load_private_key(private_key_pem) do
       {:ok, private_key} ->
         case Integer.parse(ttl) do
-          {num, _} when num >= 0 ->
+          {num, _} when num >= -1 ->
             case CrissCross.set_pointer(cluster, private_key, value, num) do
               {l, _} -> encode_redis_string(l)
               {:error, e} -> "-#{inspect(e)}\r\n"
