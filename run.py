@@ -21,6 +21,8 @@ def encode(raw):
 def read_var(t):
     if not t:
         return ""
+    if t == "*default_cluster":
+        return base58.b58decode("8ZEftKHKUhq1hfxvx7HPxjZKffDhPku12Ck1nhczysxQ")
     elif t.startswith("*"):
         parts = t.split("#")
         base = parts[0].lstrip("*")
@@ -42,8 +44,8 @@ def print_ret(ret):
 
 
 class CrissCrossClient:
-    def __init__(self, **kwargs):
-        self.conn = redis.Redis(**kwargs)
+    def __init__(self, host="localhost", port=11111, **kwargs):
+        self.conn = redis.Redis(host=host, port=port, **kwargs)
 
     def keypair(self):
         ret = self.conn.execute_command("KEYPAIR")
@@ -543,7 +545,13 @@ class CrissCrossClient:
             os.makedirs(directory)
         with open(real_fn, "wb") as f:
             self._do_download(f, it)
-
+    
+    def remote_clone(self, cluster, loc, num=1, cache=True):
+        s = "REMOTE" if cache else "REMOTENOLOCAL"
+        return (
+            self.conn.execute_command(s, cluster, str(num), "CLONE", loc)
+            == b"OK"
+        )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -628,23 +636,23 @@ if __name__ == "__main__":
     subparser = subparsers.add_parser("remote_bytes_written")
     subparser.add_argument("cluster")
     subparser.add_argument("tree")
-    subparser.add_argument("num", type=int, default=1)
-    subparser.add_argument("cache", type=bool, default=True)
+    subparser.add_argument("--num", type=int, default=1)
+    subparser.add_argument("--cache", type=bool, default=True)
 
 
     subparser = subparsers.add_parser("remote_has_key")
     subparser.add_argument("cluster")
     subparser.add_argument("tree")
     subparser.add_argument("key")
-    subparser.add_argument("num", type=int, default=1)
-    subparser.add_argument("cache", type=bool, default=True)
+    subparser.add_argument("--num", type=int, default=1)
+    subparser.add_argument("--cache", type=bool, default=True)
 
     subparser = subparsers.add_parser("remote_get")
     subparser.add_argument("cluster")
     subparser.add_argument("tree")
     subparser.add_argument("key")
-    subparser.add_argument("num", type=int, default=1)
-    subparser.add_argument("cache", type=bool, default=True)
+    subparser.add_argument("--num", type=int, default=1)
+    subparser.add_argument("--cache", type=bool, default=True)
 
     subparser = subparsers.add_parser("with_var_bytes_written")
     subparser.add_argument("cluster")
@@ -671,22 +679,27 @@ if __name__ == "__main__":
     subparser.add_argument("cluster")
     subparser.add_argument("var")
     subparser.add_argument("key")
-    subparser.add_argument("num", type=int, default=1)
-    subparser.add_argument("cache", type=bool, default=True)
+    subparser.add_argument("--num", type=int, default=1)
+    subparser.add_argument("--cache", type=bool, default=True)
 
     subparser = subparsers.add_parser("with_var_remote_has_key")
     subparser.add_argument("cluster")
     subparser.add_argument("var")
     subparser.add_argument("key")
-    subparser.add_argument("num", type=int, default=1)
-    subparser.add_argument("cache", type=bool, default=True)
+    subparser.add_argument("--num", type=int, default=1)
+    subparser.add_argument("--cache", type=bool, default=True)
 
     subparser = subparsers.add_parser("with_var_remote_bytes_written")
     subparser.add_argument("cluster")
     subparser.add_argument("var")
-    subparser.add_argument("num", type=int, default=1)
-    subparser.add_argument("cache", type=bool, default=True)
+    subparser.add_argument("--num", type=int, default=1)
+    subparser.add_argument("--cache", type=bool, default=True)
 
+    subparser = subparsers.add_parser("remote_clone")
+    subparser.add_argument("cluster")
+    subparser.add_argument("tree")
+    subparser.add_argument("--num", type=int, default=1)
+    subparser.add_argument("--cache", type=bool, default=True)
 
     args = parser.parse_args()
     host = os.getenv("HOST", "localhost")
@@ -776,8 +789,8 @@ if __name__ == "__main__":
     elif args.command == "with_var_remote_get":
         print_get(
             r.with_var_remote_get_multi_bin(
-                read_var(args.cluster),
                 args.var,
+                read_var(args.cluster),
                 [args.key],
                 num=args.num,
                 cache=args.cache,
@@ -799,7 +812,7 @@ if __name__ == "__main__":
     elif args.command == "remote_bytes_written":
         print(
             r.remote_bytes_written(
-                args.tree, num=args.num, cache=args.cache
+                read_var(args.cluster), args.tree, num=args.num, cache=args.cache
             )
         )
     elif args.command == "with_var_remote_bytes_written":
@@ -832,9 +845,21 @@ if __name__ == "__main__":
                 ttl=args.ttl,
             )
         )
+    elif args.command == "remote_clone":
+        print_get(
+            r.remote_clone(
+                read_var(args.cluster),
+                read_var(args.tree),
+                num=args.num,
+                cache=args.cache,
+            )
+        )
     # cluster FqcdM9XXWs7dXMPxMNeVCEhSdFk46kAyrNxxeT8V81W7
 
-    # loc = r.put_multi_bin("", [("key", "value")])
+    location = r.put_multi("", [(("wow", 1.2), {1: (True, None)})])
+    print_ret(location)
+    location = r.put_multi(location, [("cool", 12345)])
+    print_ret(location)
     # print(loc)
     # print(r.get_multi_bin(loc, ["key"]))
 

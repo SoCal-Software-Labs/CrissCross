@@ -8,12 +8,13 @@ defmodule CrissCross.Application do
   @cypher "9YtgMwxnoSagovuViBbJ33drDaPpC6Mc2pVDpMLS8erc"
   @public_key "2bDkyNhW9LBRtCsH9xuRRKmvWJtL7QjJ3mao1FkDypmn8kmViGsarw4"
 
+  # "8ZEftKHKUhq1hfxvx7HPxjZKffDhPku12Ck1nhczysxQ"
   @cluster_name Utils.encode_human(Utils.hash(Utils.combine_to_sign([@cypher, @public_key])))
   @max_default_overlay_ttl 45 * 60 * 60 * 1000
 
   @process_name CrissCrossDHT.Server.Worker
 
-  @default_udp 35000
+  @default_udp 33333
 
   def start(_type, _args) do
     node_id =
@@ -30,16 +31,18 @@ defmodule CrissCross.Application do
           end
 
         _ ->
+          Logger.info("NODE_SECRET not found... generating random ID")
           Utils.gen_node_id()
       end
 
     CrissCrossDHT.Registry.start()
 
     bootstrap_overlay =
-      System.get_env("BOOTSTRAP_OVERLAY", @cluster_name) |> Utils.decode_human!()
+      System.get_env("BOOTSTRAP_CLUSTER", @cluster_name) |> Utils.decode_human!()
 
-    external_tcp_port = System.get_env("EXTERNAL_TCP_PORT", "35001") |> String.to_integer()
-    internal_tcp_port = System.get_env("INTERNAL_TCP_PORT", "35002") |> String.to_integer()
+    udp_port = System.get_env("EXTERNAL_UDP_PORT", "#{@default_udp}") |> String.to_integer()
+    external_tcp_port = System.get_env("EXTERNAL_TCP_PORT", "22222") |> String.to_integer()
+    internal_tcp_port = System.get_env("INTERNAL_TCP_PORT", "11111") |> String.to_integer()
     redis_url = System.get_env("REDIS_URL", "redis://localhost:6379")
     auth = System.get_env("LOCAL_AUTH", nil)
     cluster_dir = System.get_env("CLUSTER_DIR", "./clusters") |> String.rstrip(?/)
@@ -97,7 +100,7 @@ defmodule CrissCross.Application do
 
     dht_config = %{
       bootstrap_overlay: bootstrap_overlay,
-      port: System.get_env("EXTERNAL_UDP_PORT", "#{@default_udp}") |> String.to_integer(),
+      port: udp_port,
       ipv4: true,
       ipv6: false,
       clusters: clusters,

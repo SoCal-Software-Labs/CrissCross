@@ -3,12 +3,19 @@ defmodule CrissCross.Utils do
     defexception message: "error decoding BERT"
   end
 
+  defmodule MissingHashError do
+    defexception message: "could not find hash locally"
+  end
+
   @crlf_iodata [?\r, ?\n]
 
   import CrissCrossDHT.Server.Utils, only: [encrypt: 2, decrypt: 2]
 
   defdelegate hash(h), to: CrissCrossDHT.Server.Utils, as: :hash
 
+  defdelegate encode_human(item), to: CrissCrossDHT.Server.Utils, as: :encode_human
+  defdelegate decode_human!(item), to: CrissCrossDHT.Server.Utils, as: :decode_human!
+  defdelegate serialize_bert(item), to: :erlang, as: :term_to_binary
   defdelegate serialize_bert(item), to: :erlang, as: :term_to_binary
 
   @compile {:inline, deserialize_bert: 1}

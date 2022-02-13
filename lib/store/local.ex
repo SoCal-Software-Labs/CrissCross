@@ -13,12 +13,16 @@ defmodule CrissCross.Store.Local do
     local = %Local{conn: conn, tree_hash_pid: pid, node_count_pid: nil, readonly: readonly}
 
     count =
-      case CubDB.Store.get_latest_header(local) do
-        {_, {_, {count, _}, _} = n} ->
-          count + byte_size(serialize_bert(n))
+      if is_nil(tree_hash) do
+        0
+      else
+        case CubDB.Store.get_latest_header(local) do
+          {_, {_, {count, _}, _} = n} ->
+            count + byte_size(serialize_bert(n))
 
-        nil ->
-          0
+          _ ->
+            raise MissingHashError
+        end
       end
 
     {:ok, ncpid} = Agent.start_link(fn -> count end)
@@ -29,7 +33,8 @@ end
 defimpl CubDB.Store, for: CrissCross.Store.Local do
   alias CrissCross.Store.Local
   import CrissCross.Utils
-  import Logger
+  alias CrissCross.Utils.MissingHashError
+  require Logger
 
   defp get_tree_hash(%Local{tree_hash_pid: tree_hash_pid}) do
     Agent.get(tree_hash_pid, fn list -> list end)
@@ -89,10 +94,14 @@ defimpl CubDB.Store, for: CrissCross.Store.Local do
     case ret do
       {:error, error} ->
         Logger.error("Error retrieving value from cache: #{inspect(error)}")
-        nil
+        raise MissingHashError, encode_human(location)
 
       {_, val} ->
-        val
+        if is_nil(val) do
+          raise MissingHashError, encode_human(location)
+        else
+          val
+        end
     end
   end
 
@@ -102,20 +111,16 @@ defimpl CubDB.Store, for: CrissCross.Store.Local do
         nil
 
       header_loc ->
-        case get_node(local, {0, header_loc}) do
-          nil ->
-            nil
+        value = get_node(local, {0, header_loc})
 
-          value ->
-            count =
-              if is_nil(node_count_pid) do
-                0
-              else
-                Agent.get(node_count_pid, fn count -> count end)
-              end
+        count =
+          if is_nil(node_count_pid) do
+            0
+          else
+            Agent.get(node_count_pid, fn count -> count end)
+          end
 
-            {{count, header_loc}, value}
-        end
+        {{count, header_loc}, value}
     end
   end
 

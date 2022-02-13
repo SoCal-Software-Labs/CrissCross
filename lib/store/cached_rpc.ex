@@ -14,7 +14,8 @@ end
 
 defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
   alias CrissCross.Store.CachedRPC
-  alias CrissCross.Utils
+  import CrissCross.Utils
+  alias CrissCross.Utils.MissingHashError
   import CrissCrossDHT.Server.Utils, only: [encrypt: 2, decrypt: 2]
 
   require Logger
@@ -50,8 +51,10 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
   def sync(%CachedRPC{}), do: :ok
 
   def get_node(%CachedRPC{conns: conns, local_store: local_store} = rpc, location) do
-    case CubDB.Store.get_node(local_store, location) do
-      nil ->
+    try do
+      CubDB.Store.get_node(local_store, location)
+    rescue
+      MissingHashError ->
         conns
         |> Enum.shuffle()
         |> Enum.reduce_while(nil, fn conn, acc ->
@@ -59,8 +62,8 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
             {:ok, value} when is_binary(value) ->
               case do_decrypt(conn, value) do
                 real_value when is_binary(real_value) ->
-                  if Utils.hash(real_value) == location do
-                    v = Utils.deserialize_bert(real_value)
+                  if hash(real_value) == location do
+                    v = deserialize_bert(real_value)
                     put_node(rpc, v)
                     {:halt, v}
                   else
@@ -81,11 +84,12 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
               {:cont, acc}
           end
         end)
-
-      node ->
-        node
+        |> raise_if_nil(location)
     end
   end
+
+  def raise_if_nil(nil, location), do: raise(MissingHashError, encode_human(location))
+  def raise_if_nil(val, _location), do: val
 
   def get_latest_header(%CachedRPC{tree_hash: tree_hash, local_store: local_store} = local) do
     case tree_hash do
@@ -93,14 +97,15 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
         nil
 
       header_loc ->
-        case get_node(local, {0, header_loc}) do
-          nil -> nil
-          v -> {header_loc, v}
-        end
+        {header_loc, get_node(local, {0, header_loc})}
     end
   end
 
-  def close(%CachedRPC{local_store: local_store}) do
+  def close(%CachedRPC{conns: conns, local_store: local_store}) do
+    Enum.each(conns, fn conn ->
+      ConnectionCache.return(conn)
+    end)
+
     CubDB.Store.close(local_store)
   end
 
@@ -112,20 +117,20 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
     Process.alive?(local_store)
   end
 
-  def do_get({:unencrypted, conn}, {_, location}) do
+  def do_get({:unencrypted, conn, _}, {_, location}) do
     Redix.command(conn, ["GET", location])
   end
 
-  def do_get({:encrypted, conn, secret}, {_, location}) do
+  def do_get({:encrypted, conn, secret, _}, {_, location}) do
     payload = encrypt(secret, location)
     Redix.command(conn, ["GET", payload])
   end
 
-  def do_decrypt({:unencrypted, conn}, msg) do
+  def do_decrypt({:unencrypted, conn, _}, msg) do
     msg
   end
 
-  def do_decrypt({:encrypted, conn, secret}, msg) do
+  def do_decrypt({:encrypted, conn, secret, _}, msg) do
     decrypt(msg, secret)
   end
 end

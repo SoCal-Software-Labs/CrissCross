@@ -2,6 +2,7 @@ defmodule CrissCross.InternalRedis do
   require Logger
 
   import CrissCross.Utils
+  alias CrissCross.Utils.{MissingHashError, DecoderError}
   alias CubDB.Store
   alias CrissCross.Scanner
   alias CrissCross.ConnectionCache
@@ -125,7 +126,11 @@ defmodule CrissCross.InternalRedis do
           try do
             handle(req, state)
           rescue
-            e in DecoderError -> "-Invalid BERT encoding\r\n"
+            e in DecoderError ->
+              {"-Invalid BERT encoding\r\n", state}
+
+            e in MissingHashError ->
+              {"-Storage is missing value for hash #{e.message}\r\n", state}
           end
       end
 
@@ -172,7 +177,9 @@ defmodule CrissCross.InternalRedis do
     case peers do
       [peer | _] = peers ->
         ret =
-          Enum.reduce_while(peers, [], fn peer, conns ->
+          Stream.repeatedly(fn -> Enum.random(peers) end)
+          |> Enum.take(num)
+          |> Enum.reduce_while(peers, [], fn peer, conns ->
             case ConnectionCache.get_conn(cluster, peer.ip, peer.port) do
               {:ok, conn} ->
                 {:cont, [conn | conns]}

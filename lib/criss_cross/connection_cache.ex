@@ -22,6 +22,10 @@ defmodule CrissCross.ConnectionCache do
     GenServer.call(__MODULE__, {:get_conn, {cluster, ip, port}})
   end
 
+  def return(conn) do
+    GenServer.call(__MODULE__, {:return, conn})
+  end
+
   @impl true
   def init(:ok) do
     {:ok, %{conns: %{}, timers: %{}}}
@@ -72,22 +76,31 @@ defmodule CrissCross.ConnectionCache do
           _ -> :ok
         end
 
-        timer_ref = Process.send_after(self(), {:close, ip_port}, @interval)
-        {:reply, {:ok, conn}, %{state | timers: Map.put(timers, ip_port, timer_ref)}}
+        {:reply, {:ok, conn},
+         %{state | conns: Map.delete(conns, ip_port), timers: Map.delete(timers, ip_port)}}
 
       _ ->
         case connect(cluster, ip, port) do
           {:ok, conn} ->
-            timer_ref = Process.send_after(self(), {:close, ip_port}, @interval)
-            new_timers = Map.put(timers, ip_port, timer_ref)
-            new_conns = Map.put(conns, ip_port, conn)
-            {:reply, {:ok, conn}, %{state | timers: new_timers, conns: new_conns}}
+            {:reply, {:ok, conn}, state}
 
           e ->
             e
         end
     end
   end
+
+  @impl true
+  def handle_cast({:return, conn}, _, %{conns: conns, timers: timers} = state) do
+    ip_port = conn_ip_tuple(conn)
+    timer_ref = Process.send_after(self(), {:close, ip_port}, @interval)
+    new_timers = Map.put(timers, ip_port, timer_ref)
+    new_conns = Map.put(conns, ip_port, conn)
+    {:noreply, %{state | timers: new_timers, conns: new_conns}}
+  end
+
+  def conn_ip_tuple({:encrypted, _, _, ip_tuple}), do: ip_tuple
+  def conn_ip_tuple({:unencrypted, _, ip_tuple}), do: ip_tuple
 
   def connect(cluster, {a, b, c, d} = remote_ip, port) do
     r =
@@ -107,7 +120,7 @@ defmodule CrissCross.ConnectionCache do
 
                 case Redix.command(conn, ["VERIFY", cluster_id_reponse, response]) do
                   {:ok, "OK"} ->
-                    {:commit, {:encrypted, conn, secret}}
+                    {:commit, {:encrypted, conn, secret, {remote_ip, port}}}
 
                   e ->
                     {:ignore, e}
@@ -117,7 +130,7 @@ defmodule CrissCross.ConnectionCache do
                 {:ignore, e}
             end
           else
-            {:commit, {:unencrypted, conn}}
+            {:commit, {:unencrypted, conn, {remote_ip, port}}}
           end
 
         e ->
@@ -131,8 +144,8 @@ defmodule CrissCross.ConnectionCache do
       {_, wrapped} ->
         conn =
           case wrapped do
-            {:unencrypted, conn} -> conn
-            {:encrypted, conn, _secret} -> conn
+            {:unencrypted, conn, _} -> conn
+            {:encrypted, conn, _secret, _} -> conn
           end
 
         if Process.alive?(conn) do
