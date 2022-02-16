@@ -2,8 +2,8 @@ defmodule CrissCross.GlueSql do
   defmodule Runner do
     alias CubDB.Btree
 
-    def init([tree, make_store]) do
-      {:ok, %{make_store: make_store, trees: tree}}
+    def init([tree, ttl, make_store]) do
+      {:ok, %{make_store: make_store, ttl: ttl, trees: tree}}
     end
 
     def handle_call(:location, _, state) do
@@ -17,7 +17,7 @@ defmodule CrissCross.GlueSql do
 
       case Btree.fetch(state.trees, table) do
         {:ok, {:embedded_tree, tree_hash, _}} ->
-          {:ok, store} = state.make_store.(tree_hash)
+          {:ok, store} = state.make_store.(tree_hash, nil)
           tree = CubDB.Btree.new(store)
 
           case Btree.fetch(tree, k) do
@@ -37,10 +37,10 @@ defmodule CrissCross.GlueSql do
 
       case Btree.fetch(state.trees, table) do
         {:ok, {:embedded_tree, tree_hash, _}} ->
-          {:ok, store} = state.make_store.(tree_hash)
+          {:ok, store} = state.make_store.(tree_hash, state.ttl)
           tree = CubDB.Btree.new(store)
 
-          new_tree =
+          _new_tree =
             Enum.reduce(kvs, tree, fn {k, v}, tree_acc ->
               k = :binary.list_to_bin(k)
               v = :binary.list_to_bin(v)
@@ -60,10 +60,10 @@ defmodule CrissCross.GlueSql do
            }}
 
         _ ->
-          {:ok, store} = state.make_store.(nil)
+          {:ok, store} = state.make_store.(nil, state.ttl)
           tree = CubDB.Btree.new(store)
 
-          new_tree =
+          _new_tree =
             Enum.reduce(kvs, tree, fn {k, v}, tree_acc ->
               k = :binary.list_to_bin(k)
               v = :binary.list_to_bin(v)
@@ -89,10 +89,10 @@ defmodule CrissCross.GlueSql do
 
       case Btree.fetch(state.trees, table) do
         {:ok, {:embedded_tree, tree_hash, _}} ->
-          {:ok, store} = state.make_store.(tree_hash)
+          {:ok, store} = state.make_store.(tree_hash, nil)
           tree = CubDB.Btree.new(store)
 
-          new_tree =
+          _new_tree =
             Enum.reduce(ks, tree, fn k, tree_acc ->
               k = :binary.list_to_bin(k)
               Btree.mark_deleted(tree_acc, k)
@@ -121,7 +121,7 @@ defmodule CrissCross.GlueSql do
 
       case Btree.fetch(state.trees, table) do
         {:ok, {:embedded_tree, tree_hash, _}} ->
-          {:ok, store} = state.make_store.(tree_hash)
+          {:ok, store} = state.make_store.(tree_hash, nil)
           tree = CubDB.Btree.new(store)
 
           {:ok, pid} = CrissCross.Scanner.start_link(tree, false, nil, nil)
@@ -130,7 +130,7 @@ defmodule CrissCross.GlueSql do
           {:noreply, state}
 
         _ ->
-          CrissCross.GlueSql.receive_pid_result(ref, false, self, "not found")
+          CrissCross.GlueSql.receive_pid_result(ref, false, self(), "not found")
           {:noreply, state}
       end
     end
@@ -146,10 +146,10 @@ defmodule CrissCross.GlueSql do
   def receive_pid_result(_arg1, _arg2, _arg3, _arg4), do: :erlang.nif_error(:nif_not_loaded)
   def execute_statement(_arg1, _arg2, _arg3, _arg4), do: :erlang.nif_error(:nif_not_loaded)
 
-  def boot(store, make_store, timeout \\ 10_000) do
+  def boot(store, ttl, make_store, timeout \\ 1_000) do
     ref = make_ref()
     tree = CubDB.Btree.new(store)
-    {:ok, pid} = GenServer.start_link(Runner, [tree, make_store])
+    {:ok, pid} = GenServer.start_link(Runner, [tree, ttl, make_store])
     :ok = start_sql(pid, ref)
 
     receive do
@@ -172,35 +172,18 @@ defmodule CrissCross.GlueSql do
     end
   end
 
-  def run(store, make_store, statements, timeout \\ 1_000) do
-    {:ok, pid, server} = boot(store, make_store)
+  def run(store, ttl, make_store, statements, timeout \\ 5_000) do
+    {:ok, pid, server} = boot(store, ttl, make_store, timeout)
 
     return =
       statements
       |> Enum.map(fn s ->
-        execute(server, s)
+        execute(server, s, timeout)
       end)
 
     :ok = stop(server)
     location = GenServer.call(pid, :location)
     :ok = GenServer.stop(pid)
     {location, return}
-  end
-
-  def test(hash \\ nil) do
-    {:ok, conn} = Redix.start_link("redis://localhost:6379")
-    {:ok, store} = CrissCross.Store.Local.create(conn, nil, false)
-
-    run(
-      store,
-      fn hash -> CrissCross.Store.Local.create(conn, hash, false) end,
-      [
-        # "DROP TABLE IF EXISTS Glue;",
-        # "CREATE TABLE Glue (id INTEGER);",
-        # "INSERT INTO Glue VALUES (100);",
-        # "INSERT INTO Glue VALUES (200);",
-        "SELECT * FROM Glue WHERE id > 100;"
-      ]
-    )
   end
 end

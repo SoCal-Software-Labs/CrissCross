@@ -3,59 +3,15 @@ small = "small value"
 {:ok, one_mb} = File.read("benchmarks/data/1mb")
 {:ok, ten_mb} = File.read("benchmarks/data/10mb")
 
-redis_store = fn ->
-  {:ok, store} = CrissCross.Store.Redis.create([host: "localhost", port: 6379], "1")
-  store
-end
-
-file_store = fn ->
-  {:ok, store} = CubDB.Store.File.create("dir")
-  store
-end
-
-mldht_store = fn ->
-  cluster = "CsFD25YQcZ6N179edKvhRkV9Nv75gjL6MwV16z5frniQ" |> MlDHT.Server.Utils.decode_human!()
-  {rsa_priv_key, rsa_pub_key} = MlDHT.generate_store_keypair()
-  {:ok, encoded} = ExPublicKey.pem_encode(rsa_pub_key)
-  {pub_key_hash, _} = MlDHT.store(cluster, encoded, -1)
-  {:ok, store} = CrissCross.Store.MlDHTStore.create(cluster, rsa_priv_key)
-
-  store
-end
-
-ipfs_store = fn ->
-  put_client = CrissCross.Store.IPFS.ipfs_client("http://localhost:5001")
-  get_client = CrissCross.Store.IPFS.ipfs_client("http://localhost:5001")
-
-  {:ok, store} =
-    CrissCross.Store.IPFS.create(
-      put_client,
-      get_client,
-      [host: "localhost", port: 6379],
-      "3",
-      true
-    )
+crisscross_store = fn ->
+  {:ok, conn} = Redix.start_link("redis://localhost:6379")
+  {:ok, store} = CrissCross.Store.Local.create(conn, nil, -1)
 
   store
 end
 
 {:ok, pid} =
-  Supervisor.start_link(
-    [
-      Supervisor.child_spec(
-        {Finch,
-         name: MyFinch,
-         pools: %{
-           "http://localhost:5001" => [size: 100]
-         }},
-        id: :my_finch
-      ),
-      {Finch,
-       name: MyFinchPut,
-       pools: %{
-         "http://localhost:5001" => [size: 100]
-       }}
-    ],
+  Supervisor.start_link([Supervisor.child_spec({Cachex, name: :node_cache}, id: :node_cache)],
     strategy: :one_for_one
   )
 
@@ -67,14 +23,21 @@ Benchee.run(
       end
 
       # CubDB.file_sync(db)
+    end,
+    "CubDB.put_multi/3" => fn {key, value, db} ->
+      vals = for i <- 0..100, do: {{key, i}, value}
+      CubDB.put_multi(db, vals)
+      # CubDB.file_sync(db)
     end
   },
   inputs: %{
     # "small value, auto sync" => {redis_store, small, [auto_compact: false, auto_file_sync: true]},
     # "small value" => {redis_store, small, [auto_compact: false, auto_file_sync: false]},
     # "small value file" => {file_store, small, [auto_compact: false, auto_file_sync: false]},
-    "small value file mldht_store" =>
-      {mldht_store, small, [auto_compact: false, auto_file_sync: false]}
+    "small value file crisscross" =>
+      {crisscross_store, small, [auto_compact: false, auto_file_sync: false]},
+    "ten_mb value file crisscross" =>
+      {crisscross_store, ten_mb, [auto_compact: false, auto_file_sync: false]}
     # "small value IPFS" => {ipfs_store, small, [auto_compact: false, auto_file_sync: false]}
     # "1KB value" => {redis_store, one_kb, [auto_compact: false, auto_file_sync: false]},
     # "1MB value" => {redis_store, one_mb, [auto_compact: false, auto_file_sync: false]},

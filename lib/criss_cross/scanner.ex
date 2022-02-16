@@ -1,6 +1,5 @@
 defmodule CrissCross.Scanner do
   @value CubDB.Btree.__value__()
-  @deleted CubDB.Btree.__deleted__()
   @leaf CubDB.Btree.__leaf__()
   @branch CubDB.Btree.__branch__()
 
@@ -41,7 +40,7 @@ defmodule CrissCross.Scanner do
       :done ->
         {:stop, :normal, :done, %{state | node: nil, completed: true}}
 
-      {t, {k, value} = item} ->
+      {t, item} ->
         {:reply, item, %{state | node: t}}
     end
   end
@@ -63,7 +62,7 @@ defmodule CrissCross.Scanner do
         CrissCross.GlueSql.receive_result(ref, true, false, "", "")
         {:stop, :normal, %{state | node: nil, completed: true}}
 
-      {t, {k, value} = item} ->
+      {t, {k, value}} ->
         CrissCross.GlueSql.receive_result(ref, true, true, k, value)
         {:noreply, %{state | node: t}}
     end

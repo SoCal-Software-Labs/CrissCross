@@ -23,11 +23,15 @@ end
 defimpl CubDB.Store, for: CubDB.Store.MerkleStore do
   alias CubDB.Store.MerkleStore
 
-  def clean_up(_store, cpid, btree) do
+  def identifier(_local) do
+    "Merkle"
+  end
+
+  def clean_up(_store, _cpid, _btree) do
     :ok
   end
 
-  def clean_up_old_compaction_files(store, pid) do
+  def clean_up_old_compaction_files(_store, _pid) do
     :ok
   end
 
@@ -36,7 +40,7 @@ defimpl CubDB.Store, for: CubDB.Store.MerkleStore do
   end
 
   def next_compaction_store(%MerkleStore{}) do
-    Store.MerkleStore.create()
+    MerkleStore.create()
   end
 
   def put_node(%MerkleStore{agent: agent}, node) do

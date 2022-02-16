@@ -13,17 +13,16 @@ end
 
 defimpl CubDB.Store, for: CrissCross.Store.AnnouncingStore do
   alias CrissCross.Store.AnnouncingStore
-  alias CrissCross.Utils
 
   def identifier(%AnnouncingStore{local_store: local_store}) do
     CubDB.Store.identifier(local_store)
   end
 
-  def clean_up(_store, cpid, btree) do
+  def clean_up(_store, _cpid, _btree) do
     :ok
   end
 
-  def clean_up_old_compaction_files(store, pid) do
+  def clean_up_old_compaction_files(_store, _pid) do
     :ok
   end
 
@@ -32,7 +31,7 @@ defimpl CubDB.Store, for: CrissCross.Store.AnnouncingStore do
   end
 
   def next_compaction_store(%AnnouncingStore{}) do
-    Store.AnnouncingStore.create()
+    AnnouncingStore.create()
   end
 
   def put_node(%AnnouncingStore{local_store: local_store}, n) do
@@ -46,7 +45,7 @@ defimpl CubDB.Store, for: CrissCross.Store.AnnouncingStore do
   def sync(%AnnouncingStore{}), do: :ok
 
   def get_node(
-        %AnnouncingStore{cluster: cluster, ttl: ttl, local_store: local_store} = rpc,
+        %AnnouncingStore{cluster: cluster, ttl: ttl, local_store: local_store},
         {_, hash} = location
       ) do
     case CubDB.Store.get_node(local_store, location) do
@@ -59,25 +58,23 @@ defimpl CubDB.Store, for: CrissCross.Store.AnnouncingStore do
     end
   end
 
-  def get_latest_header(
-        %AnnouncingStore{cluster: cluster, ttl: ttl, local_store: local_store} = local
-      ) do
+  def get_latest_header(%AnnouncingStore{cluster: cluster, ttl: ttl, local_store: local_store}) do
     case CubDB.Store.get_latest_header(local_store) do
       nil ->
         nil
 
-      {{_, location}, header} = e ->
+      {{_, location}, _header} = e ->
         CrissCrossDHT.cluster_announce(cluster, location, ttl)
         e
     end
   end
 
   def close(%AnnouncingStore{local_store: local_store}) do
-    CubDB.Storage.close(local_store)
+    CubDB.Store.close(local_store)
   end
 
   def blank?(%AnnouncingStore{local_store: local_store}) do
-    CubDB.Storage.blank?(local_store)
+    CubDB.Store.blank?(local_store)
   end
 
   def open?(%AnnouncingStore{local_store: local_store}) do

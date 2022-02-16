@@ -7,35 +7,9 @@ cleanup = fn ->
   end
 end
 
-redis_store = fn ->
-  {:ok, store} = CrissCross.Store.Redis.create([host: "localhost", port: 6379], "1")
-  store
-end
-
-ipfs_store = fn ->
-  put_client = CrissCross.Store.IPFS.ipfs_client("http://localhost:9094")
-  get_client = CrissCross.Store.IPFS.ipfs_client("http://localhost:8080")
-
-  {:ok, store} =
-    CrissCross.Store.IPFS.create(
-      put_client,
-      get_client,
-      [host: "localhost", port: 6379],
-      "3",
-      false
-    )
-
-  store
-end
-
-Process.sleep(10_000)
-
-mldht_store = fn ->
-  cluster = "CsFD25YQcZ6N179edKvhRkV9Nv75gjL6MwV16z5frniQ" |> MlDHT.Server.Utils.decode_human!()
-  {rsa_priv_key, rsa_pub_key} = MlDHT.generate_store_keypair()
-  {:ok, encoded} = ExPublicKey.pem_encode(rsa_pub_key)
-  {pub_key_hash, _} = MlDHT.store(cluster, encoded, -1)
-  {:ok, store} = CrissCross.Store.MlDHTStore.create(cluster, rsa_priv_key)
+crisscross_store = fn hash, ttl ->
+  {:ok, conn} = Redix.start_link("redis://localhost:6379")
+  {:ok, store} = CrissCross.Store.Local.create(conn, hash, ttl)
 
   store
 end
@@ -46,7 +20,10 @@ small = "small value"
 {:ok, ten_mb} = File.read("benchmarks/data/10mb")
 n = 100
 
-{:ok, pid} = Supervisor.start_link([{Finch, name: MyFinch}], strategy: :one_for_one)
+{:ok, pid} =
+  Supervisor.start_link([Supervisor.child_spec({Cachex, name: :node_cache}, id: :node_cache)],
+    strategy: :one_for_one
+  )
 
 Benchee.run(
   %{
@@ -55,16 +32,22 @@ Benchee.run(
     end
   },
   inputs: %{
-    "small value" => {redis_store, small},
+    "small value" => {crisscross_store, small},
+    "1KB value" => {crisscross_store, one_kb},
+    "1MB value" => {crisscross_store, one_mb},
+    "10MB value" => {crisscross_store, ten_mb}
     # "small value ipfs" => {ipfs_store, small},
-    "small value mldht_store" => {mldht_store, small}
-    # "1KB value" => one_kb,
-    # "1MB value" => one_mb,
+    # "small value mldht_store" => {mldht_store, small}
+    # " value" => one_kb,
+    # " value" => one_mb,
     # "10MB value" => ten_mb
   },
-  before_scenario: fn {store, input} ->
-    {:ok, db} = CubDB.start_link(store.(), auto_file_sync: false, auto_compact: false)
+  before_scenario: fn {mk_store, input} ->
+    store = mk_store.(nil, -1)
+    {:ok, db} = CubDB.start_link(store, auto_file_sync: false, auto_compact: false)
     for key <- 0..n, do: CubDB.put(db, key, input)
+    {{_, loc}, _} = CubDB.Store.get_latest_header(store)
+    {:ok, db} = CubDB.start_link(mk_store.(loc, -1), auto_file_sync: false, auto_compact: false)
     db
   end,
   before_each: fn db ->

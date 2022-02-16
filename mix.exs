@@ -15,22 +15,26 @@ defmodule CrissCross.MixProject do
   def application do
     [
       mod: {CrissCross.Application, []},
-      extra_applications: [:logger]
+      extra_applications: [:logger, :crypto]
     ]
   end
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:cubdb, path: "../cubdb"},
+      {:cubdb, github: "SoCal-Software-Labs/cubdb"},
       {:jason, "~> 1.3.0"},
-      {:tesla, "~> 1.4.0"},
-      {:finch, "~> 0.10.0"},
       {:redix, "~> 1.1"},
-      {:benchee, "~> 1.0"},
+      {:benchee, "~> 1.0", only: :dev},
       {:b58, "~> 1.0.2"},
       {:cachex, "~> 3.4.0"},
-      {:crisscrossdht, path: "../MlDHT"},
+      {:ex_multihash, "~> 2.0"},
+      {:ex_schnorr,
+       github: "hansonkd/ex_schnorr", ref: "c1aedaa7f38d5df49b76c4e04cfd8c666732deea"},
+      {:crisscrossdht,
+       github: "SoCal-Software-Labs/CrissCrossDHT",
+       ref: "a1f59d049905d69e443493b9f8436c4dbc7fe1e4"},
+      # {:crisscrossdht, path: "../MlDHT"},
       {:rustler, "~> 0.23.0"},
       {:yaml_elixir, "~> 2.8"}
       # {:dep_from_hexpm, "~> 0.3.0"},

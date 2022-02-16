@@ -9,18 +9,18 @@ defmodule CrissCross.ExternalRedis do
   Redix.command(conn, ["WOW", "cool"])
 
   """
-  @crlf_iodata [?\r, ?\n]
 
   def accept(port, local_redis_opts) do
     {:ok, socket} = :gen_tcp.listen(port, [:binary, active: true, reuseaddr: true])
-    Logger.info("Accepting connections on port #{port}")
+    Logger.info("External TCP accepting connections on port #{port}")
     {:ok, redis_conn} = Redix.start_link(local_redis_opts)
-    {:ok, local_store} = CrissCross.Store.Local.create(redis_conn, nil, true)
+    {:ok, local_store} = CrissCross.Store.Local.create(redis_conn, nil, nil)
     loop_acceptor(socket, %{local_store: local_store})
   end
 
   defp loop_acceptor(socket, state) do
     {:ok, client} = :gen_tcp.accept(socket)
+    Logger.info("New external TCP connection")
 
     {:ok, pid} =
       Task.Supervisor.start_child(CrissCross.TaskSupervisor, fn ->
@@ -62,7 +62,7 @@ defmodule CrissCross.ExternalRedis do
   end
 
   def handle(["AUTH", _, _], state) do
-    {"-AUTH not supported - Use Handshake", state}
+    {encode_redis_error("AUTH not supported - Use Handshake"), state}
   end
 
   def handle(["PING"], state) do
@@ -86,17 +86,17 @@ defmodule CrissCross.ExternalRedis do
         case decrypt_cluster_message(cluster_id, token_encrypted) do
           response when is_binary(response) ->
             if response == token do
-              {encode_redis_string("OK"), Map.put(state, :cluster, cluster_id)}
+              {redis_ok(), Map.put(state, :cluster, cluster_id)}
             else
-              {"-Invalid token", state}
+              {encode_redis_error("Invalid token"), state}
             end
 
           _ ->
-            {"-Error decrypting token", state}
+            {encode_redis_error("Error decrypting token"), state}
         end
 
       _ ->
-        {"-Error decrypting cluster", state}
+        {encode_redis_error("Error decrypting cluster"), state}
     end
   end
 
@@ -105,7 +105,7 @@ defmodule CrissCross.ExternalRedis do
       %{secret: secret} ->
         case decrypt(loc, secret) do
           location when is_binary(location) -> do_get(state, location, secret)
-          _ -> "-Error decrypting location"
+          _ -> encode_redis_error("Error decrypting location")
         end
 
       _ ->
@@ -115,7 +115,7 @@ defmodule CrissCross.ExternalRedis do
 
   def do_get(%{cluster: cluster, local_store: local_store} = state, loc, secret) do
     if CrissCross.has_announced(local_store, cluster, loc) do
-      case CubDB.Store.get_node(local_store, loc) do
+      case CubDB.Store.get_node(local_store, {0, loc}) do
         nil ->
           {"$-1\r\n", state}
 

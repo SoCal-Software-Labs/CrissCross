@@ -3,25 +3,36 @@ defmodule CrissCross.Store.Local do
 
   # `CubDB.Store.Local` is an implementation of the `Store` protocol
 
-  defstruct conn: nil, tree_hash_pid: nil, readonly: nil, node_count_pid: nil
+  defstruct conn: nil, tree_hash_pid: nil, node_count_pid: nil, ttl: nil
   alias CrissCross.Store.Local
   import CrissCross.Utils
+  alias CrissCross.Utils.MissingHashError
 
-  def create(conn, tree_hash, readonly) do
+  def create(conn, tree_hash, ttl \\ nil) do
     {:ok, pid} = Agent.start_link(fn -> tree_hash end)
 
-    local = %Local{conn: conn, tree_hash_pid: pid, node_count_pid: nil, readonly: readonly}
+    local = %Local{
+      conn: conn,
+      tree_hash_pid: pid,
+      node_count_pid: nil,
+      ttl: ttl
+    }
 
     count =
       if is_nil(tree_hash) do
         0
       else
-        case CubDB.Store.get_latest_header(local) do
-          {_, {_, {count, _}, _} = n} ->
-            count + byte_size(serialize_bert(n))
+        try do
+          case CubDB.Store.get_latest_header(local) do
+            {_, {_, {count, _}, _} = n} ->
+              count + byte_size(serialize_bert(n))
 
-          _ ->
-            raise MissingHashError
+            _ ->
+              raise MissingHashError
+          end
+        rescue
+          MissingHashError ->
+            0
         end
       end
 
@@ -44,11 +55,11 @@ defimpl CubDB.Store, for: CrissCross.Store.Local do
     get_tree_hash(local)
   end
 
-  def clean_up(_store, cpid, btree) do
+  def clean_up(_store, _cpid, _btree) do
     :ok
   end
 
-  def clean_up_old_compaction_files(store, pid) do
+  def clean_up_old_compaction_files(_store, _pid) do
     :ok
   end
 
@@ -56,18 +67,81 @@ defimpl CubDB.Store, for: CrissCross.Store.Local do
     {:ok, nil}
   end
 
-  def next_compaction_store(%Local{}) do
-    Store.Local.create()
+  def next_compaction_store(l = %Local{}) do
+    l
   end
 
-  def put_node(%Local{conn: conn, readonly: readonly, node_count_pid: node_count_pid}, n) do
+  def put_node(
+        %Local{conn: conn, node_count_pid: node_count_pid, ttl: ttl},
+        n
+      ) do
     bin = serialize_bert(n)
     loc = hash(bin)
-    {:ok, _} = Cachex.put(:node_cache, loc, n)
     count = Agent.get_and_update(node_count_pid, fn count -> {count, count + byte_size(bin)} end)
+    key = "nodes" <> loc
 
-    if not readonly do
-      {:ok, "OK"} = Redix.command(conn, ["SET", "nodes" <> loc, bin])
+    if not String.starts_with?(loc, <<0x01>>) do
+      case ttl do
+        nil ->
+          {:ok, _} = Cachex.put(:node_cache, loc, n)
+
+        -1 ->
+          {:ok, _} = Cachex.put(:node_cache, loc, n)
+
+          {:ok, ret} =
+            Redix.command(
+              conn,
+              ["PTTL", key]
+            )
+
+          # Until Redis 7 is released make sure TTLs are monotonic
+          case ret do
+            -2 ->
+              {:ok, "OK"} = Redix.command(conn, ["SET", key, bin])
+
+            -1 ->
+              :ok
+
+            setttl when is_number(setttl) ->
+              {:ok, "OK"} = Redix.command(conn, ["PERSIST", key])
+          end
+
+        _ ->
+          ttl_diff = ttl - :os.system_time(:millisecond)
+          {:ok, _} = Cachex.put(:node_cache, loc, n, ttl: ttl_diff)
+
+          # Until Redis 7 is released make sure TTLs are monotonic
+          {:ok, ret} =
+            Redix.command(
+              conn,
+              ["PTTL", key]
+            )
+
+          case ret do
+            -2 ->
+              {:ok, "OK"} =
+                Redix.command(
+                  conn,
+                  ["SET", key, bin, "PXAT", "#{ttl}"]
+                )
+
+            -1 ->
+              :ok
+
+            setttl when is_number(setttl) and setttl < ttl_diff ->
+              {:ok, 1} =
+                Redix.command(
+                  conn,
+                  ["PEXPIREAT", key, "#{ttl}"]
+                )
+
+            setttl when is_number(setttl) ->
+              :ok
+
+            e ->
+              raise "Error putting tree node #{inspect(e)}"
+          end
+      end
     end
 
     {count, loc}
@@ -81,15 +155,72 @@ defimpl CubDB.Store, for: CrissCross.Store.Local do
 
   def sync(%Local{}), do: :ok
 
-  def get_node(%Local{conn: conn}, {_, location}) do
+  def get_node(
+        %Local{},
+        {_, <<0x01, _::integer-size(8), size::integer-size(8), b::binary-size(size), _::binary>>}
+      ) do
+    deserialize_bert(b)
+  end
+
+  def get_node(%Local{conn: conn, ttl: ttl}, {_, location}) do
+    key = "nodes" <> location
+
+    func = fn expire_command ->
+      case Redix.pipeline(conn, [["GET", key]] ++ expire_command) do
+        {:ok, [nil | _]} -> {:ignore, nil}
+        {:ok, [value | _]} when is_binary(value) -> {:commit, deserialize_bert(value)}
+        _ = e -> {:ignore, e}
+      end
+    end
+
+    cache_func = fn _ -> func.([]) end
+
     ret =
-      Cachex.fetch(:node_cache, location, fn _ ->
-        case Redix.command(conn, ["GET", "nodes" <> location]) do
-          {:ok, nil} -> {:ignore, nil}
-          {:ok, value} when is_binary(value) -> {:commit, deserialize_bert(value)}
-          _ = e -> {:ignore, e}
-        end
-      end)
+      case ttl do
+        nil ->
+          Cachex.fetch(:node_cache, location, cache_func)
+
+        -1 ->
+          {:ok, ret} =
+            Redix.command(
+              conn,
+              ["PTTL", key]
+            )
+
+          case ret do
+            -2 ->
+              raise MissingHashError, encode_human(location)
+
+            -1 ->
+              Cachex.fetch(:node_cache, location, cache_func)
+
+            setttl when is_number(setttl) ->
+              func.(["PERSIST", key])
+          end
+
+        _ ->
+          ttl_diff = ttl - :os.system_time(:millisecond)
+
+          {:ok, ret} =
+            Redix.command(
+              conn,
+              ["PTTL", key]
+            )
+
+          case ret do
+            -2 ->
+              raise MissingHashError, encode_human(location)
+
+            -1 ->
+              Cachex.fetch(:node_cache, location, cache_func)
+
+            setttl when is_number(setttl) and setttl < ttl_diff ->
+              func.(["PEXPIREAT", key, "#{ttl}"])
+
+            setttl when is_number(setttl) ->
+              Cachex.fetch(:node_cache, location, cache_func)
+          end
+      end
 
     case ret do
       {:error, error} ->
@@ -105,7 +236,7 @@ defimpl CubDB.Store, for: CrissCross.Store.Local do
     end
   end
 
-  def get_latest_header(%Local{conn: conn, node_count_pid: node_count_pid} = local) do
+  def get_latest_header(%Local{node_count_pid: node_count_pid} = local) do
     case get_tree_hash(local) do
       nil ->
         nil

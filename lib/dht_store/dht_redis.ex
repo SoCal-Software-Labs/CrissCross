@@ -15,17 +15,21 @@ defmodule CrissCross.DHTStorage.DHTRedis do
   ## 5 Minutes
   @review_time 5 * @min_in_ms
 
-  ## 30 Minutes
-  @node_expired 30 * @min_in_ms
-
   ## 60 Minutes
   @node_reannounce 1000 * 60 * @min_in_ms
 
   def start_link(opts) do
     {redis_opts, opts} = Keyword.pop(opts, :redis_opts)
     {:ok, conn} = Redix.start_link(redis_opts, opts)
-    {:ok, _pid} = GenServer.start_link(__MODULE__, [conn], [])
-    {:ok, conn}
+
+    case Redix.command(conn, ["PING"]) do
+      {:ok, "PONG"} ->
+        {:ok, _pid} = GenServer.start_link(__MODULE__, [conn], [])
+        {:ok, conn}
+
+      e ->
+        e
+    end
   end
 
   def init([conn]) do
@@ -34,19 +38,28 @@ defmodule CrissCross.DHTStorage.DHTRedis do
   end
 
   def cluster_announce(pid, cluster, infohash, ttl) do
+    ttl =
+      if ttl == -1 do
+        "+inf"
+      else
+        ttl
+      end
+
     {:ok, _} =
-      Redix.transaction_pipeline(pid, [
+      Redix.command(
+        pid,
         ["ZADD", Enum.join(["announced", cluster], "-"), "GT", "CH", "#{ttl}", infohash]
-      ])
+      )
 
     :ok
   end
 
   def has_announced_cluster(pid, cluster, infohash) do
     ret =
-      Redix.transaction_pipeline(pid, [
+      Redix.command(
+        pid,
         ["ZSCORE", Enum.join(["announced", cluster], "-"), infohash]
-      ])
+      )
 
     case ret do
       {:ok, nil} -> false
@@ -59,9 +72,10 @@ defmodule CrissCross.DHTStorage.DHTRedis do
     bin = :erlang.term_to_binary({ip, port})
 
     {:ok, _} =
-      Redix.transaction_pipeline(pid, [
+      Redix.command(
+        pid,
         ["ZADD", Enum.join(["members", cluster, infohash], "-"), "CH", "#{ttl}", bin]
-      ])
+      )
 
     :ok
   end
@@ -79,8 +93,7 @@ defmodule CrissCross.DHTStorage.DHTRedis do
 
         _ ->
           Redix.transaction_pipeline(pid, [
-            ["SET", Enum.join(["values", cluster, key], "-"), value],
-            ["EXPIRE", key, "#{div(ttl, 1000)}"],
+            ["SET", Enum.join(["values", cluster, key], "-"), value, "PXAT", "#{ttl}"],
             ["RPUSH", "values:queue", bin]
           ])
       end
@@ -122,8 +135,7 @@ defmodule CrissCross.DHTStorage.DHTRedis do
           Redix.transaction_pipeline(
             pid,
             [
-              ["SET", key, bin],
-              ["EXPIRE", key, "#{div(ttl, 1000)}"]
+              ["SET", key, bin, "PXAT", "#{ttl}"]
             ] ++ reannounce
           )
       end
@@ -156,7 +168,10 @@ defmodule CrissCross.DHTStorage.DHTRedis do
         "ZRANGEBYSCORE",
         Enum.join(["members", cluster, infohash], "-"),
         "#{:os.system_time(:millisecond)}",
-        "+inf"
+        "+inf",
+        "LIMIT",
+        "0",
+        "100"
       ])
 
     vals |> Enum.map(&:erlang.binary_to_term/1)

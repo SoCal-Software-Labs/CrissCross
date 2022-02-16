@@ -16,7 +16,6 @@ defmodule CrissCross.Utils do
   defdelegate encode_human(item), to: CrissCrossDHT.Server.Utils, as: :encode_human
   defdelegate decode_human!(item), to: CrissCrossDHT.Server.Utils, as: :decode_human!
   defdelegate serialize_bert(item), to: :erlang, as: :term_to_binary
-  defdelegate serialize_bert(item), to: :erlang, as: :term_to_binary
 
   @compile {:inline, deserialize_bert: 1}
   def deserialize_bert(item) do
@@ -28,9 +27,24 @@ defmodule CrissCross.Utils do
     end
   end
 
+  @compile {:inline, redis_ok: 0}
+  def redis_ok() do
+    "+OK\r\n"
+  end
+
+  @compile {:inline, redis_nil: 0}
+  def redis_nil() do
+    "$-1\r\n"
+  end
+
   @compile {:inline, encode_redis_string: 1}
   def encode_redis_string(item) do
     [?$, Integer.to_string(byte_size(item)), @crlf_iodata, item, @crlf_iodata]
+  end
+
+  @compile {:inline, encode_redis_error: 1}
+  def encode_redis_error(item) do
+    [?-, item, @crlf_iodata]
   end
 
   @compile {:inline, encode_redis_integer: 1}

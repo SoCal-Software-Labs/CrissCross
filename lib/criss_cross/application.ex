@@ -4,11 +4,12 @@ defmodule CrissCross.Application do
   require Logger
 
   alias CrissCrossDHT.Server.Utils
+  import Cachex.Spec
 
   @cypher "9YtgMwxnoSagovuViBbJ33drDaPpC6Mc2pVDpMLS8erc"
   @public_key "2bDkyNhW9LBRtCsH9xuRRKmvWJtL7QjJ3mao1FkDypmn8kmViGsarw4"
 
-  # "8ZEftKHKUhq1hfxvx7HPxjZKffDhPku12Ck1nhczysxQ"
+  # "2UPhq1AXgmhSd6etUcSQRPfm42mSREcjUixSgi9N8nU1YoC"
   @cluster_name Utils.encode_human(Utils.hash(Utils.combine_to_sign([@cypher, @public_key])))
   @max_default_overlay_ttl 45 * 60 * 60 * 1000
 
@@ -17,22 +18,42 @@ defmodule CrissCross.Application do
   @default_udp 33333
 
   def start(_type, _args) do
+    redis_url = System.get_env("REDIS_URL", "redis://localhost:6379")
+
     node_id =
       case System.get_env("NODE_SECRET", nil) do
         node_id when is_binary(node_id) ->
-          case Utils.load_private_key(Utils.decode_human!(node_id)) do
-            {:ok, priv} ->
-              {:ok, pub} = ExSchnorr.public_from_private(priv)
-              {:ok, bytes} = ExSchnorr.public_to_bytes(pub)
-              Utils.hash(bytes)
-
-            _ ->
-              raise "Invalid NODE_SECRET"
+          with {:ok, priv} <- Utils.load_private_key(Utils.decode_human!(node_id)),
+               {:ok, pub} <- ExSchnorr.public_from_private(priv),
+               {:ok, bytes} <- ExSchnorr.public_to_bytes(pub) do
+            Utils.hash(bytes)
+          else
+            {:error, e} ->
+              raise "Invalid NODE_SECRET #{inspect(e)}"
           end
 
         _ ->
-          Logger.info("NODE_SECRET not found... generating random ID")
-          Utils.gen_node_id()
+          {:ok, redis_conn} = Redix.start_link(redis_url)
+
+          ret =
+            case Redix.command(redis_conn, ["GET", "me"]) do
+              {:ok, node_id} when is_binary(node_id) ->
+                Logger.info("NODE_SECRET not found... loaded ID from storage")
+                node_id
+
+              {:ok, nil} ->
+                Logger.info("NODE_SECRET not found... generating random ID")
+                id = Utils.gen_node_id()
+                {:ok, _} = Redix.command(redis_conn, ["SET", "me", id])
+                id
+
+              {:error, e} ->
+                Logger.error("Redis not working #{inspect(e)}")
+                Utils.gen_node_id()
+            end
+
+          Redix.stop(redis_conn)
+          ret
       end
 
     CrissCrossDHT.Registry.start()
@@ -43,9 +64,17 @@ defmodule CrissCross.Application do
     udp_port = System.get_env("EXTERNAL_UDP_PORT", "#{@default_udp}") |> String.to_integer()
     external_tcp_port = System.get_env("EXTERNAL_TCP_PORT", "22222") |> String.to_integer()
     internal_tcp_port = System.get_env("INTERNAL_TCP_PORT", "11111") |> String.to_integer()
-    redis_url = System.get_env("REDIS_URL", "redis://localhost:6379")
-    auth = System.get_env("LOCAL_AUTH", nil)
-    cluster_dir = System.get_env("CLUSTER_DIR", "./clusters") |> String.rstrip(?/)
+
+    auth = System.get_env("LOCAL_AUTH", "")
+    cluster_dir = System.get_env("CLUSTER_DIR", "./clusters") |> String.trim_trailing("?")
+    ip = System.get_env("EXTERNAL_IP", "127.0.0.1")
+
+    [a, b, c, d] =
+      ip
+      |> String.split(".")
+      |> Enum.map(&String.to_integer/1)
+
+    external_ip = {a, b, c, d}
 
     bootstrap_nodes =
       System.get_env(
@@ -73,15 +102,15 @@ defmodule CrissCross.Application do
              "Name" => name,
              "MaxTTL" => max_ttl,
              "Cypher" => cypher,
-             "PublicKey" => pubk,
-             "PrivateKey" => privk
-           }} ->
+             "PublicKey" => pubk
+           } = opts} ->
             [
               {name,
                %{
                  max_ttl: max_ttl,
                  secret: cypher,
-                 public_key: pubk
+                 public_key: pubk,
+                 private_key: Map.get(opts, "PrivateKey")
                }}
             ]
 
@@ -102,6 +131,7 @@ defmodule CrissCross.Application do
       bootstrap_overlay: bootstrap_overlay,
       port: udp_port,
       ipv4: true,
+      ipv4_addr: external_ip,
       ipv6: false,
       clusters: clusters,
       bootstrap_nodes: bootstrap_nodes,
@@ -114,6 +144,10 @@ defmodule CrissCross.Application do
 
     children = [
       CrissCross.ConnectionCache,
+      Supervisor.child_spec(
+        {Cachex, name: :blacklisted_ips, expiration: expiration(default: :timer.minutes(10))},
+        id: :blacklisted_ips
+      ),
       Supervisor.child_spec({Cachex, name: :node_cache}, id: :node_cache),
       {Task.Supervisor, name: CrissCross.TaskSupervisor},
       Supervisor.child_spec(
@@ -139,8 +173,8 @@ defmodule CrissCross.Application do
       {CrissCrossDHT.Supervisor, node_id: node_id, worker_name: @process_name, config: dht_config}
     ]
 
-    Logger.debug("External serving on: #{external_tcp_port}")
-    Logger.debug("Internal serving on: #{internal_tcp_port}")
+    Logger.info("Exposing IP #{ip}")
+    Logger.info("UDP accepting connections on port #{udp_port}")
     ## Start the main supervisor
     opts = [strategy: :one_for_one, name: CrissCross.Supervisor]
     Supervisor.start_link(children, opts)

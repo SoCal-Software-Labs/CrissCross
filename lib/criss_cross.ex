@@ -1,23 +1,6 @@
 defmodule CrissCross do
-  """
-  {:ok, redis_conn} = Redix.start_link("redis://localhost:6379")
-  location = CrissCross.put_multi(redis_conn, nil, [{"hello", "world"}])
-  CrissCross.get_multi(redis_conn, location, ["hello"])
-  CrissCross.stream_db(redis_conn, location) |> Enum.into([])
-  CrissCross.stream_concurrent(redis_conn, location) |> Enum.into([])
-
-  cluster = "CsFD25YQcZ6N179edKvhRkV9Nv75gjL6MwV16z5frniQ" |> CrissCross.decode_human!()
-  CrissCross.announce_have_tree(cluster, location, 2005)
-
-  cluster = "CsFD25YQcZ6N179edKvhRkV9Nv75gjL6MwV16z5frniQ" |> CrissCross.decode_human!()
-  {:ok, redis_conn2} = Redix.start_link("redis://localhost:6379/3")
-  CrissCross.byte_size(redis_conn2, cluster, <<179, 204, 54, 6, 106, 242, 240, 253, 24, 37, 38, 36, 245, 124, 80, 215, 123, 78, 217, 138, 64, 113, 198, 148, 16, 186, 6, 93, 15, 192, 38, 248>>, false)
-
-  CrissCross.clone(redis_conn2, cluster, <<179, 204, 54, 6, 106, 242, 240, 253, 24, 37, 38, 36, 245, 124, 80, 215, 123, 78, 217, 138, 64, 113, 198, 148, 16, 186, 6, 93, 15, 192, 38, 248>>)
-  CrissCross.get_multi(redis_conn2, <<179, 204, 54, 6, 106, 242, 240, 253, 24, 37, 38, 36, 245, 124, 80, 215, 123, 78, 217, 138, 64, 113, 198, 148, 16, 186, 6, 93, 15, 192, 38, 248>>, ["hello"])
-  """
-
   alias CrissCross.ConnectionCache
+  alias CubDB.Btree
 
   require Logger
 
@@ -31,10 +14,10 @@ defmodule CrissCross do
 
   def stream_db(store) do
     get_children = fn
-      {@value, value} = node, _store ->
+      {@value, value}, _store ->
         value
 
-      {_, locs} = node, store ->
+      {_, locs}, store ->
         locs
         |> Enum.map(fn {k, loc} ->
           fn -> {k, CubDB.Store.get_node(store, loc)} end
@@ -54,7 +37,7 @@ defmodule CrissCross do
 
   def stream_concurrent(store, opts \\ []) do
     get_children = fn
-      {_, locs} = node, store ->
+      {_, locs}, store ->
         locs
         |> Enum.map(fn {k, loc} ->
           fn -> {k, CubDB.Store.get_node(store, loc)} end
@@ -106,7 +89,7 @@ defmodule CrissCross do
   defp next({[n | rest], todo}, store, get_children) do
     case n.() do
       {k, value = {@value, _}} -> {{rest, todo}, {k, get_children.(value, store)}}
-      {k, @deleted} -> next({rest, todo}, store, get_children)
+      {_k, @deleted} -> next({rest, todo}, store, get_children)
     end
   end
 
@@ -129,12 +112,12 @@ defmodule CrissCross do
     end
   end
 
-  defp next_task({[n | rest], todo}, store, get_children) do
+  defp next_task({[n | rest], todo}, _store, _get_children) do
     {{rest, todo}, n}
   end
 
-  def sql(local_store, make_store, statements) do
-    CrissCross.GlueSql.run(local_store, make_store, statements)
+  def sql(local_store, ttl, make_store, statements) do
+    CrissCross.GlueSql.run(local_store, ttl, make_store, statements)
   end
 
   def get_multi(local_store, ks) do
@@ -149,9 +132,9 @@ defmodule CrissCross do
     location
   end
 
-  def delete_key(local_store, loc) do
+  def delete_keys(local_store, locs) do
     {:ok, db} = CubDB.start_link(local_store, auto_file_sync: false, auto_compact: false)
-    :ok = CubDB.delete_key(db, loc)
+    :ok = CubDB.delete_multi(db, locs)
     {{_, location}, _} = CubDB.Store.get_latest_header(local_store)
     location
   end
@@ -310,7 +293,7 @@ defmodule CrissCross do
     ret
   end
 
-  def has_announced(store, cluster, tree_hash) do
+  def has_announced(_store, cluster, tree_hash) do
     CrissCrossDHT.has_announced(
       cluster,
       tree_hash
@@ -326,7 +309,7 @@ defmodule CrissCross do
     CrissCrossDHT.search_announce(
       cluster,
       tree_hash,
-      fn node ->
+      fn _node ->
         :ok
       end,
       ttl,
@@ -361,7 +344,8 @@ defmodule CrissCross do
           {ip, port} ->
             n = %{ip: ip, port: port}
 
-            if not Enum.member?(skip_nodes, n) do
+            if not Enum.member?(skip_nodes, n) and
+                 Cachex.get(:blacklisted_ips, {ip, port}) == {:ok, nil} do
               send(task_pid, {task_ref, n})
             end
         end)
@@ -380,10 +364,6 @@ defmodule CrissCross do
       end)
 
     Task.await(task, timeout)
-  end
-
-  def find_latest_header(tree_loc) do
-    CrissCrossDHT.find_name_sync(tree_loc)
   end
 
   def clean_tree(tree) do

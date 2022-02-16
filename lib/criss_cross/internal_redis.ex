@@ -20,60 +20,16 @@ defmodule CrissCross.InternalRedis do
     "SQL",
     "SQLJSON",
     "ITERSTART",
-    "CLONE",
+    "PERSIST",
     "BYTESWRITTEN"
   ]
 
-  @doc """
-  {:ok, rsa_priv_key} = ExPublicKey.generate_key()
-  {:ok, rsa_pub_key} = ExPublicKey.public_key_from_private_key(rsa_priv_key)
-  {:ok, pem_string_private} = ExPublicKey.pem_encode(rsa_priv_key)
-  {:ok, pem_string_public} = ExPublicKey.pem_encode(rsa_pub_key)
-
-  {:ok, conn} = Redix.start_link(host: "localhost", port: 2004)
-  cluster = "CsFD25YQcZ6N179edKvhRkV9Nv75gjL6MwV16z5frniQ" |> CrissCross.decode_human!()
-  loc = <<102, 28, 56, 250, 109, 167, 206, 238, 224, 114, 17, 192, 226, 64, 229, 236,
-  177, 166, 81, 213, 84, 152, 13, 71, 143, 30, 53, 56, 185, 212, 210, 42>>
-
-  Redix.command(conn, ["REMOTE", cluster, "2", "SQLJSON", loc, "SELECT * FROM Glue WHERE id > 100;"])
-
-
-  {:ok, name} = Redix.command(conn, ["POINTERSET", "122", cluster, pem_string_private, "1000"])
-
-  Redix.command(conn, ["POINTERLOOKUP", cluster, name, "0"])
-
-  Redix.command(conn, ["VARSET", "boom", loc])
-  Redix.command(conn, ["VARWITH", "boom", "REMOTE", cluster, "2", "SQL_JSON", "SELECT * FROM Glue WHERE id > 100;"])
-  Redix.command(conn, ["VARWITH", "boom", "REMOTE", cluster, "2", "SQL_JSON", loc, "SELECT * FROM Glue WHERE id > 100;"])
-
-
-  {:ok, loc} = Redix.command(conn, ["PUT_MULTI", "", :erlang.term_to_binary("hello"), :erlang.term_to_binary("world")])
-  Redix.command(conn, ["GET_MULTI", loc, :erlang.term_to_binary("hello")])
-
-  Redix.command(conn, ["WOW", "cool"])
-
-  {:ok, conn} = Redix.start_link(host: "localhost", port: 35002)
-  {:ok, [loc | _]} = Redix.command(conn, ["SQLJSON", "", "DROP TABLE IF EXISTS Glue;", "CREATE TABLE Glue (id INTEGER);", "INSERT INTO Glue VALUES (100);", "INSERT INTO Glue VALUES (200);", "SELECT * FROM Glue WHERE id > 100;"])
-  cluster = "CsFD25YQcZ6N179edKvhRkV9Nv75gjL6MwV16z5frniQ" |> CrissCross.decode_human!()
-  Redix.command(conn, ["ANNOUNCE", cluster, loc, "60000000"])
-  Redix.command(conn, ["HASANNOUNCED", cluster, loc])
-
-
-
-  cluster = "CsFD25YQcZ6N179edKvhRkV9Nv75gjL6MwV16z5frniQ" |> CrissCross.decode_human!()
-
-  loc = <<103, 109, 208, 95, 120, 253, 34, 104, 253, 201, 74, 201, 73, 13, 215, 87,
-     254, 86, 201, 243, 205, 191, 55, 75, 117, 153, 41, 103, 110, 85, 191,
-     214>>
-  CrissCross.announce_have_tree(cluster, loc, 35001)
-  """
-
   def accept(port, external_port, local_redis_opts, auth) do
     {:ok, socket} = :gen_tcp.listen(port, [:binary, active: true, reuseaddr: true])
-    Logger.info("Accepting connections on port #{port}")
+    Logger.info("Internal TCP accepting connections on port #{port}")
     {:ok, redis_conn} = Redix.start_link(local_redis_opts)
 
-    make_store = fn hash -> CrissCross.Store.Local.create(redis_conn, hash, false) end
+    make_store = fn hash, ttl -> CrissCross.Store.Local.create(redis_conn, hash, ttl) end
 
     loop_acceptor(socket, %{
       auth: auth,
@@ -126,11 +82,11 @@ defmodule CrissCross.InternalRedis do
           try do
             handle(req, state)
           rescue
-            e in DecoderError ->
-              {"-Invalid BERT encoding\r\n", state}
+            DecoderError ->
+              {encode_redis_error("Invalid BERT encoding"), state}
 
             e in MissingHashError ->
-              {"-Storage is missing value for hash #{e.message}\r\n", state}
+              {encode_redis_error("Storage is missing value for hash #{e.message}"), state}
           end
       end
 
@@ -145,10 +101,10 @@ defmodule CrissCross.InternalRedis do
   def do_remote(cluster, num, command, tree, args, state, use_local) do
     case get_conns(cluster, command, num, tree, args, state, []) do
       {:ok, conns} ->
-        new_make_store = fn hash ->
+        new_make_store = fn hash, ttl ->
           {:ok, store} =
             if use_local do
-              state.make_store.(hash)
+              state.make_store.(hash, ttl)
             else
               CubDB.Store.MerkleStore.create()
             end
@@ -162,7 +118,7 @@ defmodule CrissCross.InternalRedis do
         })
 
       {:error, msg} ->
-        {"-#{msg}\r\n", state}
+        {encode_redis_error(msg), state}
     end
   end
 
@@ -175,17 +131,17 @@ defmodule CrissCross.InternalRedis do
     peers = CrissCross.find_peers_for_header(cluster, tree, num, skip_nodes)
 
     case peers do
-      [peer | _] = peers ->
+      [_ | _] = peers ->
         ret =
           Stream.repeatedly(fn -> Enum.random(peers) end)
           |> Enum.take(num)
-          |> Enum.reduce_while(peers, [], fn peer, conns ->
+          |> Enum.reduce_while([], fn peer, conns ->
             case ConnectionCache.get_conn(cluster, peer.ip, peer.port) do
               {:ok, conn} ->
                 {:cont, [conn | conns]}
 
               {:error, error} ->
-                Logger.error("Could not connect to peer #{inspect(peer)}")
+                Logger.error("Could not connect to peer #{inspect(peer)} #{inspect(error)}")
                 {:halt, {:error, peer}}
             end
           end)
@@ -203,23 +159,23 @@ defmodule CrissCross.InternalRedis do
     end
   end
 
-  def handle_auth(["AUTH", _, _], %{auth: nil, authed: false} = state) do
-    {"-AUTH not supported\r\n", state}
+  def handle_auth(["AUTH", _, _], %{auth: "", authed: false} = state) do
+    {encode_redis_error("AUTH not supported"), state}
   end
 
   def handle_auth(["AUTH", username, password], %{auth: auth, authed: false} = state) do
     if auth == Enum.join([username, password], ":") do
-      {"+OK\r\n", %{state | authed: true}}
+      {redis_ok(), %{state | authed: true}}
     else
-      {"-Invalid credentials\r\n", state}
+      {encode_redis_error("Invalid credentials"), state}
     end
   end
 
   def handle_iter(["ITERSTART", tree], %{make_store: make_store} = state) do
-    {:ok, store} = make_store.(clean_maybe(tree))
+    {:ok, store} = make_store.(clean_maybe(tree), nil)
     btree = CubDB.Btree.new(store)
     {:ok, pid} = Scanner.start_link(btree, false, nil, nil)
-    {"+OK\r\n", %{state | iterator: pid}}
+    {redis_ok(), %{state | iterator: pid}}
   end
 
   def handle_iter(
@@ -238,10 +194,10 @@ defmodule CrissCross.InternalRedis do
         k -> {deserialize_bert(k), clean_bool(inc_max)}
       end
 
-    {:ok, store} = make_store.(clean_maybe(tree))
+    {:ok, store} = make_store.(clean_maybe(tree), nil)
     btree = CubDB.Btree.new(store)
     {:ok, pid} = Scanner.start_link(btree, clean_bool(reverse), mink, maxk)
-    {"+OK\r\n", %{state | iterator: pid}}
+    {redis_ok(), %{state | iterator: pid}}
   end
 
   def handle_iter(["ITERNEXT"], %{iterator: pid} = state) when is_pid(pid) do
@@ -256,15 +212,15 @@ defmodule CrissCross.InternalRedis do
 
   def handle_iter(["ITERSTOP"], %{iterator: pid} = state) when is_pid(pid) do
     GenServer.stop(pid)
-    {"+OK\r\n", %{state | iterator: nil}}
+    {redis_ok(), %{state | iterator: nil}}
   end
 
   def handle_iter(_, state) do
-    {"-Not in Iterator\r\n", state}
+    {encode_redis_error("Not in Iterator"), state}
   end
 
-  def handle(_, %{auth: auth, authed: false} = state) when is_binary(auth) do
-    {"-Not Authenticated\r\n", state}
+  def handle(_, %{auth: auth, authed: false} = state) when auth != "" do
+    {encode_redis_error("Not Authenticated"), state}
   end
 
   def handle([command | rest], state) when command in ["ITERSTART", "ITERNEXT", "ITERSTOP"] do
@@ -272,7 +228,7 @@ defmodule CrissCross.InternalRedis do
   end
 
   def handle(_, %{iterator: it} = state) when is_pid(it) do
-    {"-Active Iterator\r\n", state}
+    {encode_redis_error("Active Iterator"), state}
   end
 
   def handle(["REMOTENOLOCAL", cluster, num_remotes, command, tree | args], state)
@@ -282,7 +238,7 @@ defmodule CrissCross.InternalRedis do
         do_remote(cluster, num, command, tree, args, state, false)
 
       _ ->
-        {"-Invalid number of peers\r\n", state}
+        {encode_redis_error("Invalid number of peers"), state}
     end
   end
 
@@ -293,7 +249,7 @@ defmodule CrissCross.InternalRedis do
         do_remote(cluster, num, command, tree, args, state, true)
 
       _ ->
-        {"-Invalid number of peers\r\n", state}
+        {encode_redis_error("Invalid number of peers"), state}
     end
   end
 
@@ -306,44 +262,54 @@ defmodule CrissCross.InternalRedis do
               {handle([command, cluster, remotes, subcommand, val | rest], state), state}
 
             _ ->
-              "-#{command} use with VARWITH malformed\r\n"
+              encode_redis_error("#{command} use with VARWITH malformed")
           end
         else
           handle([command, val | args], state)
         end
 
       _ ->
-        {"-Invalid VAR\r\n", state}
+        {encode_redis_error("Invalid VAR"), state}
     end
   end
 
   def handle(["VARSET", local_var, val], %{redis_conn: redis_conn} = state) do
     case Redix.command(redis_conn, ["SET", Enum.join(["vars", local_var], "-"), val]) do
       {:ok, _val} ->
-        {"+OK\r\n", state}
+        {redis_ok(), state}
 
       {:error, e} ->
-        {"-error #{inspect(e)}\r\n", state}
+        {encode_redis_error("error #{inspect(e)}"), state}
     end
   end
 
-  def handle(c, %{redis_conn: redis_conn} = state) do
+  def handle(c, state) do
     {handle_stateless(c, state), state}
   end
 
-  def handle_stateless(["VARGET", local_var], %{redis_conn: redis_conn} = state) do
+  def handle_stateless(["VARGET", local_var], %{redis_conn: redis_conn}) do
     case Redix.command(redis_conn, ["GET", Enum.join(["vars", local_var], "-")]) do
       {:ok, val} when is_binary(val) ->
         encode_redis_string(val)
 
       _ ->
-        "-Invalid VAR\r\n"
+        encode_redis_error("Invalid VAR")
+    end
+  end
+
+  def handle_stateless(["VARDELETE", local_var], %{redis_conn: redis_conn}) do
+    case Redix.command(redis_conn, ["DEL", Enum.join(["vars", local_var], "-")]) do
+      {:ok, _val} ->
+        redis_ok()
+
+      _ ->
+        encode_redis_error("Invalid VAR")
     end
   end
 
   def handle_stateless(["GETMULTIBIN", tree, loc | locs], %{make_store: make_store}) do
     loc_terms = [loc | locs]
-    {:ok, store} = make_store.(clean_maybe(tree))
+    {:ok, store} = make_store.(clean_maybe(tree), nil)
     res = CrissCross.get_multi(store, loc_terms)
     Store.close(store)
 
@@ -357,7 +323,7 @@ defmodule CrissCross.InternalRedis do
   end
 
   def handle_stateless(["BYTESWRITTEN", tree], %{make_store: make_store}) do
-    {:ok, store} = make_store.(clean_maybe(tree))
+    {:ok, store} = make_store.(clean_maybe(tree), nil)
     {{loc, _}, _} = Store.get_latest_header(store)
     Store.close(store)
     encode_redis_integer(loc)
@@ -365,7 +331,7 @@ defmodule CrissCross.InternalRedis do
 
   def handle_stateless(["GETMULTI", tree, loc | locs], %{make_store: make_store}) do
     loc_terms = [loc | locs] |> Enum.map(&deserialize_bert/1)
-    {:ok, store} = make_store.(clean_maybe(tree))
+    {:ok, store} = make_store.(clean_maybe(tree), nil)
     res = CrissCross.get_multi(store, loc_terms)
     Store.close(store)
 
@@ -378,42 +344,48 @@ defmodule CrissCross.InternalRedis do
     |> encode_redis_list()
   end
 
-  def handle_stateless(["CLONE", tree], %{make_store: make_store}) do
-    {:ok, store} = make_store.(clean_maybe(tree))
-    res = CrissCross.clone(store, make_store)
-    Store.close(store)
+  def handle_stateless(["PERSIST", tree, ttl], %{make_store: make_store}) do
+    case Integer.parse(ttl) do
+      {num, _} when num >= -1 ->
+        {:ok, store} = make_store.(clean_maybe(tree), DHTUtils.adjust_ttl(num))
+        res = CrissCross.clone(store, make_store)
+        Store.close(store)
 
-    case res do
-      :ok -> "+OK\r\n"
-      {:error, e} -> "-#{inspect(e)}\r\n"
+        case res do
+          :ok -> redis_ok()
+          {:error, e} -> encode_redis_error("#{inspect(e)}")
+        end
+
+      _ ->
+        encode_redis_error("Invalid TTL")
     end
   end
 
   def handle_stateless(["FETCH", tree, loc], %{make_store: make_store}) do
-    {:ok, store} = make_store.(clean_maybe(tree))
+    {:ok, store} = make_store.(clean_maybe(tree), nil)
 
     r = CrissCross.fetch(store, loc |> deserialize_bert())
     Store.close(store)
 
     case r do
       {:ok, value} -> encode_redis_string(value |> serialize_bert())
-      :error -> "$-1\r\n"
+      :error -> redis_nil()
     end
   end
 
   def handle_stateless(["FETCHBIN", tree, loc], %{make_store: make_store}) do
-    {:ok, store} = make_store.(clean_maybe(tree))
+    {:ok, store} = make_store.(clean_maybe(tree), nil)
     r = CrissCross.fetch(store, loc)
     Store.close(store)
 
     case r do
       {:ok, value} -> encode_redis_string(value)
-      :error -> "$-1\r\n"
+      :error -> redis_nil()
     end
   end
 
   def handle_stateless(["HASKEY", tree, loc], %{make_store: make_store}) do
-    {:ok, store} = make_store.(clean_maybe(tree))
+    {:ok, store} = make_store.(clean_maybe(tree), nil)
     r = CrissCross.has_key?(store, loc |> deserialize_bert())
     Store.close(store)
 
@@ -424,7 +396,7 @@ defmodule CrissCross.InternalRedis do
   end
 
   def handle_stateless(["HASKEYBIN", tree, loc], %{make_store: make_store}) do
-    {:ok, store} = make_store.(clean_maybe(tree))
+    {:ok, store} = make_store.(clean_maybe(tree), nil)
     r = CrissCross.has_key?(store, loc)
     Store.close(store)
 
@@ -434,93 +406,119 @@ defmodule CrissCross.InternalRedis do
     end
   end
 
-  def handle_stateless(["PUTMULTI", tree, key, value | kvs], %{make_store: make_store})
+  def handle_stateless(["PUTMULTI", tree, ttl, key, value | kvs], %{make_store: make_store})
       when rem(length(kvs), 2) == 0 do
-    terms =
-      [key, value | kvs]
-      |> Enum.chunk_every(2)
-      |> Enum.map(fn [k, v] ->
-        {deserialize_bert(k), deserialize_bert(v)}
-      end)
+    case Integer.parse(ttl) do
+      {num, _} when num >= -1 ->
+        terms =
+          [key, value | kvs]
+          |> Enum.chunk_every(2)
+          |> Enum.map(fn [k, v] ->
+            {deserialize_bert(k), deserialize_bert(v)}
+          end)
 
-    {:ok, store} = make_store.(clean_maybe(tree))
-    location = CrissCross.put_multi(store, terms)
-    Store.close(store)
-    encode_redis_string(location)
+        {:ok, store} = make_store.(clean_maybe(tree), DHTUtils.adjust_ttl(num))
+        location = CrissCross.put_multi(store, terms)
+        Store.close(store)
+        encode_redis_string(location)
+
+      _ ->
+        encode_redis_error("Invalid TTL")
+    end
   end
 
-  def handle_stateless(["PUTMULTIBIN", tree, key, value | kvs], %{make_store: make_store})
+  def handle_stateless(["PUTMULTIBIN", tree, ttl, key, value | kvs], %{make_store: make_store})
       when rem(length(kvs), 2) == 0 do
-    terms =
-      [key, value | kvs]
-      |> Enum.chunk_every(2)
-      |> Enum.map(fn [k, v] ->
-        {k, v}
-      end)
+    case Integer.parse(ttl) do
+      {num, _} when num >= -1 ->
+        terms =
+          [key, value | kvs]
+          |> Enum.chunk_every(2)
+          |> Enum.map(fn [k, v] ->
+            {k, v}
+          end)
 
-    {:ok, store} = make_store.(clean_maybe(tree))
-    location = CrissCross.put_multi(store, terms)
-    Store.close(store)
-    encode_redis_string(location)
+        {:ok, store} = make_store.(clean_maybe(tree), DHTUtils.adjust_ttl(num))
+        location = CrissCross.put_multi(store, terms)
+        Store.close(store)
+        encode_redis_string(location)
+
+      _ ->
+        encode_redis_error("Invalid TTL")
+    end
   end
 
-  def handle_stateless(["DELMULTIKEY", tree, loc], %{make_store: make_store}) do
-    {:ok, store} = make_store.(clean_maybe(tree))
-    location = CrissCross.delete_key(store, deserialize_bert(loc))
-    Store.close(store)
-    encode_redis_string(location)
+  def handle_stateless(["DELMULTIKEY", tree, ttl, loc | locs], %{make_store: make_store}) do
+    case Integer.parse(ttl) do
+      {num, _} when num >= -1 ->
+        {:ok, store} = make_store.(clean_maybe(tree), DHTUtils.adjust_ttl(num))
+        location = CrissCross.delete_keys(store, Enum.map([loc | locs], &deserialize_bert/1))
+        Store.close(store)
+        encode_redis_string(location)
+
+      _ ->
+        encode_redis_error("Invalid TTL")
+    end
   end
 
-  def handle_stateless(["DELMULTIBIN", tree, loc], %{make_store: make_store}) do
-    {:ok, store} = make_store.(clean_maybe(tree))
-    location = CrissCross.delete_key(store, loc)
-    Store.close(store)
-    encode_redis_string(location)
+  def handle_stateless(["DELMULTIBIN", tree, ttl, loc | locs], %{make_store: make_store}) do
+    case Integer.parse(ttl) do
+      {num, _} when num >= -1 ->
+        {:ok, store} = make_store.(clean_maybe(tree), DHTUtils.adjust_ttl(num))
+        location = CrissCross.delete_keys(store, [loc | locs])
+        Store.close(store)
+        encode_redis_string(location)
+
+      _ ->
+        encode_redis_error("Invalid TTL")
+    end
   end
 
-  def handle_stateless(["SQL", tree, statement | rest], %{make_store: make_store}) do
-    {:ok, store} = make_store.(clean_maybe(tree))
-    {location, return} = CrissCross.sql(store, make_store, [statement | rest])
-    Store.close(store)
-    encode_redis_list([location] ++ Enum.map(return, &serialize_bert/1))
+  def handle_stateless(["SQL", tree, ttl, statement | rest], %{make_store: make_store}) do
+    case Integer.parse(ttl) do
+      {num, _} when num >= -1 ->
+        {:ok, store} = make_store.(clean_maybe(tree), DHTUtils.adjust_ttl(num))
+        {location, return} = CrissCross.sql(store, make_store, [statement | rest])
+        Store.close(store)
+        encode_redis_list([location] ++ Enum.map(return, &serialize_bert/1))
+
+      _ ->
+        encode_redis_error("Invalid TTL")
+    end
   end
 
-  def handle_stateless(["SQLJSON", tree, statement | rest], %{
-        external_port: external_port,
+  def handle_stateless(["SQLREAD", tree, statement | rest], %{
         make_store: make_store
       }) do
-    {:ok, store} = make_store.(clean_maybe(tree))
-    {location, return} = CrissCross.sql(store, make_store, [statement | rest])
+    {:ok, store} = make_store.(clean_maybe(tree), nil)
+    {_location, return} = CrissCross.sql(store, make_store, [statement | rest])
     Store.close(store)
-    return = return |> Enum.map(fn {status, v} -> [status, v] end)
-    encode_redis_list([location] ++ Enum.map(return, &Jason.encode!/1))
+    encode_redis_list(Enum.map(return, &serialize_bert/1))
   end
 
   def handle_stateless(["ANNOUNCE", cluster, tree, ttl], %{
         external_port: external_port,
         make_store: make_store
       }) do
-    {:ok, store} = make_store.(clean_maybe(tree))
-
     ret =
       case Integer.parse(ttl) do
         {num, _} when num >= -1 ->
+          {:ok, store} = make_store.(clean_maybe(tree), DHTUtils.adjust_ttl(num))
           :ok = CrissCross.announce(store, cluster, tree, external_port, num)
-          "+OK\r\n"
+          Store.close(store)
+          redis_ok()
 
         _ ->
-          "-Invalid TTL Integer\r\n"
+          encode_redis_error("Invalid TTL")
       end
 
-    Store.close(store)
     ret
   end
 
   def handle_stateless(["HASANNOUNCED", cluster, tree], %{
-        external_port: external_port,
         make_store: make_store
       }) do
-    {:ok, store} = make_store.(clean_maybe(tree))
+    {:ok, store} = make_store.(clean_maybe(tree), nil)
 
     ret =
       case CrissCross.has_announced(store, cluster, tree) do
@@ -540,13 +538,13 @@ defmodule CrissCross.InternalRedis do
       {num, _} when num >= 0 ->
         case CrissCross.find_pointer(cluster, name, num) do
           name when is_binary(name) -> encode_redis_string(name)
-          :timeout -> "$-1\r\n"
-          :not_found -> "$-1\r\n"
-          {:error, e} -> "-Error setting pointer #{inspect(e)}\r\n"
+          :timeout -> redis_nil()
+          :not_found -> redis_nil()
+          {:error, e} -> encode_redis_error("Error setting pointer #{inspect(e)}")
         end
 
       _ ->
-        "-Invalid generation\r\n"
+        encode_redis_error("Invalid Generation")
     end
   end
 
@@ -556,29 +554,14 @@ defmodule CrissCross.InternalRedis do
       }) do
     case Integer.parse(ttl) do
       {num, _} when num >= -1 ->
-        {:ok, store} = make_store.(clean_maybe(tree))
+        {:ok, store} = make_store.(clean_maybe(tree), DHTUtils.adjust_ttl(num))
         :ok = CrissCross.announce(store, cluster, tree, external_port, num)
         CrissCrossDHT.store(cluster, tree, num)
         Store.close(store)
-        "+OK\r\n"
+        redis_ok()
 
       _ ->
-        "-Invalid generation\r\n"
-    end
-  end
-
-  def handle_stateless(["POINTERLOOKUP", cluster, name, generation], _state) do
-    case Integer.parse(generation) do
-      {num, _} when num >= 0 ->
-        case CrissCross.find_pointer(cluster, name, num) do
-          name when is_binary(name) -> encode_redis_string(name)
-          :timeout -> "$-1\r\n"
-          :not_found -> "$-1\r\n"
-          {:error, e} -> "-Error setting pointer #{inspect(e)}\r\n"
-        end
-
-      _ ->
-        "-Invalid generation\r\n"
+        encode_redis_error("Invalid TTL")
     end
   end
 
@@ -589,15 +572,15 @@ defmodule CrissCross.InternalRedis do
           {num, _} when num >= -1 ->
             case CrissCross.set_pointer(cluster, private_key, value, num) do
               {l, _} -> encode_redis_string(l)
-              {:error, e} -> "-#{inspect(e)}\r\n"
+              {:error, e} -> encode_redis_error("#{inspect(e)}")
             end
 
           _ ->
-            "-Invalid generation\r\n"
+            encode_redis_error("Invalid TTL")
         end
 
       _ ->
-        "-Invalid private key\r\n"
+        encode_redis_error("Invalid private key")
     end
   end
 
@@ -619,7 +602,7 @@ defmodule CrissCross.InternalRedis do
 
   def handle_stateless(c, _) do
     Logger.error("Invalid command #{inspect(c)}")
-    "-Invalid command\r\n"
+    encode_redis_error("Invalid command")
   end
 
   def clean_maybe("nil"), do: nil

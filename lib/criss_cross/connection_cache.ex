@@ -6,10 +6,6 @@ defmodule CrissCross.ConnectionCache do
 
   use GenServer
 
-  alias CubDB.Store
-  alias CrissCross.ConnectionCache
-  alias CrissCrossDHT.Server.Utils
-
   require Logger
 
   @interval 60 * 1000
@@ -23,7 +19,7 @@ defmodule CrissCross.ConnectionCache do
   end
 
   def return(conn) do
-    GenServer.call(__MODULE__, {:return, conn})
+    GenServer.cast(__MODULE__, {:return, conn})
   end
 
   @impl true
@@ -33,7 +29,7 @@ defmodule CrissCross.ConnectionCache do
 
   @impl true
   def handle_info(
-        {:close, {cluster, ip, port} = ip_port},
+        {:close, ip_port},
         %{conns: conns, timers: timers} = state
       ) do
     new_conns =
@@ -41,12 +37,12 @@ defmodule CrissCross.ConnectionCache do
         {nil, new_conns} ->
           new_conns
 
-        {{:encrypted, conn, _}, new_conns} ->
-          GenServer.stop(conn)
+        {{:encrypted, conn, _, _}, new_conns} ->
+          Redix.stop(conn)
           new_conns
 
-        {{:unencrypted, conn}, new_conns} ->
-          GenServer.stop(conn)
+        {{:unencrypted, conn, _}, new_conns} ->
+          Redix.stop(conn)
           new_conns
       end
 
@@ -71,13 +67,27 @@ defmodule CrissCross.ConnectionCache do
       ) do
     case conns do
       %{^ip_port => conn} ->
-        case timers do
-          %{^ip_port => timer} -> Process.cancel_timer(timer)
-          _ -> :ok
-        end
+        case Redix.command(conn, ["PING"]) do
+          {:ok, "PONG"} ->
+            case timers do
+              %{^ip_port => timer} -> Process.cancel_timer(timer)
+              _ -> :ok
+            end
 
-        {:reply, {:ok, conn},
-         %{state | conns: Map.delete(conns, ip_port), timers: Map.delete(timers, ip_port)}}
+            {:reply, {:ok, conn},
+             %{state | conns: Map.delete(conns, ip_port), timers: Map.delete(timers, ip_port)}}
+
+          _ ->
+            case connect(cluster, ip, port) do
+              {:ok, conn} ->
+                {:reply, {:ok, conn},
+                 %{state | conns: Map.delete(conns, ip_port), timers: Map.delete(timers, ip_port)}}
+
+              e ->
+                Cachex.put!(:blacklisted_ips, {ip, port}, true)
+                {:reply, e, state}
+            end
+        end
 
       _ ->
         case connect(cluster, ip, port) do
@@ -85,13 +95,14 @@ defmodule CrissCross.ConnectionCache do
             {:reply, {:ok, conn}, state}
 
           e ->
-            e
+            Cachex.put!(:blacklisted_ips, {ip, port}, true)
+            {:reply, e, state}
         end
     end
   end
 
   @impl true
-  def handle_cast({:return, conn}, _, %{conns: conns, timers: timers} = state) do
+  def handle_cast({:return, conn}, %{conns: conns, timers: timers} = state) do
     ip_port = conn_ip_tuple(conn)
     timer_ref = Process.send_after(self(), {:close, ip_port}, @interval)
     new_timers = Map.put(timers, ip_port, timer_ref)
@@ -142,24 +153,7 @@ defmodule CrissCross.ConnectionCache do
         e
 
       {_, wrapped} ->
-        conn =
-          case wrapped do
-            {:unencrypted, conn, _} -> conn
-            {:encrypted, conn, _secret, _} -> conn
-          end
-
-        if Process.alive?(conn) do
-          case Redix.command(conn, ["PING"]) do
-            {:ok, "PONG"} ->
-              {:ok, wrapped}
-
-            _ ->
-              {:error, "Remote connection not responding"}
-          end
-        else
-          Cachex.del(:connection_cache, {remote_ip, port, cluster})
-          get_conn(cluster, remote_ip, port)
-        end
+        {:ok, wrapped}
     end
   end
 end
