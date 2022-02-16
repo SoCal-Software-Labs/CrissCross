@@ -40,11 +40,11 @@ Another important consideration is that CrissCross is private. IPFS on the other
 CrissCross comes distributed as a script which launches docker containers for the CrissCross server as well as a KeyDB instance. KeyDB is a Redis compatible database which allows larger than memory storage. All you need installed is the docker daemon.
 
 ```bash
-curl 
+curl https://raw.githubusercontent.com/SoCal-Software-Labs/CrissCross/main/launch_crisscross_server.sh -o ./launch_criss_cross.sh
 chmod +x ./launch_criss_cross.sh
 ```
 
-And finally execute the command to launch the database and server to connect to the overlay. By default KeyDB will store data in `./data` and CrissCross will look for cluster configurations in `./clusters`
+And finally execute the command to launch the database and server to connect to the overlay. By default KeyDB will store data in `./data` and CrissCross will look for cluster configurations in `./clusters` of the directory you launch the script in.
 
 ```bash
 ./launch_criss_cross.sh
@@ -112,28 +112,6 @@ $ crisscross put $MYVAR "hello2" "world2"
 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
 ```
 
-## Clone and Share Trees
-
-Once you have a hash, you can share it on the network and others can clone it from you. `*defaultcluster` is a special string that is replaced with the name of the default bootstrap overlay cluster
-
-```bash
-# On one machine
-$ crisscross announce *defaultcluster 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
-True
-```
-
-```bash
-# On other machine query the tree without fully downloading it
-$ crisscross remote_get *defaultcluster 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M "hello2"
-"world2"
-# They can clone the tree to get a local copy
-$ crisscross remote_persist *defaultcluster 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
-True
-$ crisscross get 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M "hello"
-"world"
-```
-
-
 ## Cluster Basics
 
 A cluster consists of 4 immutable pieces of information. There is a PrivateKey which gives the holder permission to ask the cluster to store data. There is the public key that cluster members use to verify the private key. A Cypher is used to encrypt all cluster DHT traffic over the wire. Think of a Cypher as the password to talk to the cluster. Finally there is the Name, which is a Hash of the Cypher and Public keys combined. A user configurable MaxTTL can be set per node and is not cluster wide.
@@ -162,6 +140,28 @@ True
 ```
 
 You can distribute this YAML file to anybody you wish to join the cluster. Be careful who you give the Private key to as they can push data to the cluster.
+
+
+## Clone and Share Trees
+
+Once you have a hash, you can share it on the network and others can clone it from you. `*defaultcluster` is a special string that is replaced with the name of the default bootstrap overlay cluster
+
+```bash
+# On one machine
+$ crisscross announce *defaultcluster 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
+True
+```
+
+```bash
+# On other machine query the tree without fully downloading it
+$ crisscross remote_get *defaultcluster 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M "hello2"
+"world2"
+# They can clone the tree to get a local copy
+$ crisscross remote_persist *defaultcluster 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
+True
+$ crisscross get 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M "hello"
+"world"
+```
 
 ## Premptively Storing Data on a Cluster
 
