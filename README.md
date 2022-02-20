@@ -1,10 +1,10 @@
-# CrissCross - Like IPFS... but with Redis Protocol, a SQL Layer, Privacy and Distribution as well as File Downloads
+# CrissCross - Like if IPFS was also a Real-Time Distributed Computing Network
 
-CrissCross is a new way to share immutable structures. Build a tree, get a hash and distribute it in your own private cluster. Connect with any language that has a redis client. Store data in high speed databases.
+CrissCross is a new way to share immutable structures and call remote procedures. Build a tree, get a hash and distribute it in your own private cluster. Generate a key and advertise a service on the cluster. Connect with any language that has a redis client. Store data in high speed databases.
 
 ## Status
 
-This is alpha software. Expect bugs and API changes.
+This is alpha software. Expect bugs and API changes. Please make an issue for any discussion or proposals.
 
 # Why?
 
@@ -193,4 +193,3 @@ In the future there may be an option for a non-cryptographic CrissCross with emb
 * [Using Redis](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Redis-Example)
 * [Redis API](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Redis-API)
 * [Using Python](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Python-Client)
-* [Redis API](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Redis-API)
