@@ -41,6 +41,25 @@ defmodule CrissCross.Store.Local do
   end
 end
 
+defimpl CrissCross.KVStore, for: CrissCross.Store.Local do
+  alias CrissCross.Store.Local
+
+  def put(%Local{conn: conn}, key, value) do
+    {:ok, "OK"} = Redix.command(conn, ["SET", key, value])
+    :ok
+  end
+
+  def get(%Local{conn: conn, node_count_pid: node_count_pid, ttl: ttl}, key) do
+    {:ok, v} = Redix.command(conn, ["GET", key])
+    v
+  end
+
+  def delete(%Local{conn: conn, node_count_pid: node_count_pid, ttl: ttl}, key) do
+    {:ok, _} = Redix.command(conn, ["DEL", key])
+    :ok
+  end
+end
+
 defimpl CubDB.Store, for: CrissCross.Store.Local do
   alias CrissCross.Store.Local
   import CrissCross.Utils
@@ -178,7 +197,7 @@ defimpl CubDB.Store, for: CrissCross.Store.Local do
     ret =
       case ttl do
         nil ->
-          Cachex.fetch(:node_cache, location, cache_func)
+          fetch_from_node_cache(location, cache_func)
 
         -1 ->
           {:ok, ret} =
@@ -192,7 +211,7 @@ defimpl CubDB.Store, for: CrissCross.Store.Local do
               raise MissingHashError, encode_human(location)
 
             -1 ->
-              Cachex.fetch(:node_cache, location, cache_func)
+              fetch_from_node_cache(location, cache_func)
 
             setttl when is_number(setttl) ->
               func.(["PERSIST", key])
@@ -212,13 +231,13 @@ defimpl CubDB.Store, for: CrissCross.Store.Local do
               raise MissingHashError, encode_human(location)
 
             -1 ->
-              Cachex.fetch(:node_cache, location, cache_func)
+              fetch_from_node_cache(location, cache_func)
 
             setttl when is_number(setttl) and setttl < ttl_diff ->
               func.(["PEXPIREAT", key, "#{ttl}"])
 
             setttl when is_number(setttl) ->
-              Cachex.fetch(:node_cache, location, cache_func)
+              fetch_from_node_cache(location, cache_func)
           end
       end
 

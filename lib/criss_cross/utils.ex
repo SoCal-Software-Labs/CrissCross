@@ -7,6 +7,10 @@ defmodule CrissCross.Utils do
     defexception message: "could not find hash locally"
   end
 
+  defmodule MaxTransferExceeded do
+    defexception message: "max size of transfer exceeded"
+  end
+
   @crlf_iodata [?\r, ?\n]
 
   import CrissCrossDHT.Server.Utils, only: [encrypt: 2, decrypt: 2]
@@ -52,6 +56,10 @@ defmodule CrissCross.Utils do
     [?:, Integer.to_string(item), @crlf_iodata]
   end
 
+  def encode_redis_list_raw(acc) do
+    [?*, Integer.to_string(length(acc)), @crlf_iodata, acc]
+  end
+
   defdelegate encode_redis_list(item), to: Redix.Protocol, as: :pack
 
   def new_challenge_token() do
@@ -85,7 +93,30 @@ defmodule CrissCross.Utils do
     end
   end
 
+  def cluster_max_transfer_size(cluster_id, msg) do
+    case get_cluster_secret(cluster_id) do
+      %{max_transfer: max_transfer} ->
+        max_transfer
+
+      _e ->
+        0
+    end
+  end
+
   def get_cluster_secret(cluster_id) do
-    Agent.get(CrissCross.ClusterConfigs, fn clusters -> Map.get(clusters, cluster_id) end)
+    CrissCrossDHT.ClusterWatcher.get_cluster(cluster_id)
+  end
+
+  def fetch_from_node_cache(location, cache_func) do
+    ret = Cachex.fetch(:node_cache, location, cache_func)
+
+    case ret do
+      {_, val} when is_binary(val) ->
+        Cachex.touch(:node_cache, location)
+        ret
+
+      _ ->
+        ret
+    end
   end
 end

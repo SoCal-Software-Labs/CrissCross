@@ -24,19 +24,22 @@ defmodule CrissCross.MixProject do
     [
       {:cubdb, github: "SoCal-Software-Labs/cubdb"},
       {:jason, "~> 1.3.0"},
-      {:redix, "~> 1.1"},
+      {:redix, github: "SoCal-Software-Labs/safe-redix"},
+      {:xandra, "~> 0.11"},
       {:benchee, "~> 1.0", only: :dev},
       {:b58, "~> 1.0.2"},
       {:cachex, "~> 3.4.0"},
       {:ex_multihash, "~> 2.0"},
-      {:ex_schnorr,
-       github: "hansonkd/ex_schnorr", ref: "c1aedaa7f38d5df49b76c4e04cfd8c666732deea"},
-      {:crisscrossdht,
+      {:ex_schnorr, "~> 0.1.0"},
+      {:criss_cross_dht,
        github: "SoCal-Software-Labs/CrissCrossDHT",
-       ref: "a1f59d049905d69e443493b9f8436c4dbc7fe1e4"},
-      # {:crisscrossdht, path: "../MlDHT"},
+       ref: "2142dfe21eb5ac98258977c1a11db28d043fff5d"},
+      # {:criss_cross_dht, path: "../MlDHT"},
       {:rustler, "~> 0.23.0"},
-      {:yaml_elixir, "~> 2.8"}
+      {:yaml_elixir, "~> 2.8"},
+      {:sorted_set_kv, "~> 0.1.2"},
+      {:file_system, "~> 0.2.10"},
+      {:hammer, "~> 6.0"}
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]

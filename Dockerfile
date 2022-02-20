@@ -23,7 +23,6 @@ COPY config config
 RUN . $HOME/.cargo/env && mix do deps.get, deps.compile
 
 # build project
-COPY priv priv
 COPY lib lib
 COPY native native
 RUN . $HOME/.cargo/env && mix do compile, release
@@ -42,6 +41,9 @@ ENV MIX_ENV=prod
 # prepare app directory
 RUN mkdir /app
 WORKDIR /app
+RUN /bin/sh -c "groupadd -r crisscross && useradd -r -g crisscross crisscross"
+RUN /bin/sh -c "mkdir /data && chown crisscross:crisscross /data"
+
 
 # copy release to app container
 COPY --from=build /app/_build/prod/rel/criss_cross .
@@ -49,8 +51,9 @@ COPY priv/.bashrc $HOME/.bashrc
 RUN . $HOME/.bashrc
 
 COPY priv/run.sh .
-RUN chown -R nobody: /app
-USER nobody
+RUN chown -R crisscross:crisscross /app
+USER crisscross
+VOLUME /data
 
 ENV LC_ALL="en_US.UTF-8"
 ENV HOME=/app

@@ -20,9 +20,8 @@ defmodule CrissCross.ValueCloner do
   end
 
   @impl true
-  def init({redis_opts, external_port}) do
-    {:ok, redis_conn} = Redix.start_link(redis_opts)
-    make_store = fn hash, ttl -> CrissCross.Store.Local.create(redis_conn, hash, ttl) end
+  def init({make_make_store, external_port}) do
+    make_store = make_make_store.()
     Process.send_after(self(), :process_queue, @interval)
     {:ok, %{queue: [], external_port: external_port, make_store: make_store}}
   end
@@ -67,6 +66,15 @@ defmodule CrissCross.ValueCloner do
           try do
             {:ok, store} = new_make_store.(tree)
             :ok = CrissCross.clone(store, new_make_store)
+            max_transfer = Utils.cluster_max_transfer_size(cluster)
+
+            case Store.get_latest_header(store) do
+              {{written, _}, _} when written > max_transfer ->
+                raise Utils.MaxTransferExceeded
+
+              _ ->
+                :ok
+            end
 
             :ok =
               CrissCross.announce(
@@ -80,9 +88,14 @@ defmodule CrissCross.ValueCloner do
             Store.close(store)
             Logger.info("Cloned #{Utils.encode_human(cluster)} #{Utils.encode_human(tree)}")
           rescue
+            Utils.MaxTransferExceeded ->
+              Logger.error(
+                "Error cloning #{Utils.encode_human(tree)}: maximum transfer size exceeded."
+              )
+
             Utils.MissingHashError ->
               Logger.error(
-                "Error cloning #{Utils.encode_human(tree)} could not find value for node."
+                "Error cloning #{Utils.encode_human(tree)}: could not find value for node."
               )
 
               if attempts < @max_attempts do

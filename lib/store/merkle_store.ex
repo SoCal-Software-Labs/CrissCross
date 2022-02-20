@@ -1,4 +1,4 @@
-defmodule CubDB.Store.MerkleStore do
+defmodule CrissCross.Store.MerkleStore do
   @moduledoc false
 
   # `CubDB.Store.MerkleStore` is an implementation of the `Store` protocol
@@ -7,7 +7,7 @@ defmodule CubDB.Store.MerkleStore do
   # by avoid using the file system.
 
   defstruct agent: nil
-  alias CubDB.Store.MerkleStore
+  alias CrissCross.Store.MerkleStore
 
   @type t :: %MerkleStore{agent: pid}
 
@@ -20,8 +20,9 @@ defmodule CubDB.Store.MerkleStore do
   end
 end
 
-defimpl CubDB.Store, for: CubDB.Store.MerkleStore do
-  alias CubDB.Store.MerkleStore
+defimpl CubDB.Store, for: CrissCross.Store.MerkleStore do
+  alias CrissCross.Store.MerkleStore
+  import CrissCross.Utils
 
   def identifier(_local) do
     "Merkle"
@@ -47,7 +48,7 @@ defimpl CubDB.Store, for: CubDB.Store.MerkleStore do
     Agent.get_and_update(
       agent,
       fn {map, latest_header_loc} ->
-        loc = :crypto.hash(:blake2b, :erlang.term_to_binary(node))
+        loc = hash(:erlang.term_to_binary(node))
         {{0, loc}, {Map.put(map, loc, node), latest_header_loc}}
       end,
       :infinity
@@ -58,7 +59,7 @@ defimpl CubDB.Store, for: CubDB.Store.MerkleStore do
     Agent.get_and_update(
       agent,
       fn {map, _} ->
-        loc = :crypto.hash(:blake2b, :erlang.term_to_binary(header))
+        loc = hash(:erlang.term_to_binary(header))
         {{0, loc}, {Map.put(map, loc, header), loc}}
       end,
       :infinity

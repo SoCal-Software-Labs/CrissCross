@@ -45,7 +45,7 @@ Enum.map(results, &:erlang.binary_to_term/1)
 
 ## SQL
 
-```
+```elixir
 {:ok, [loc | results]} = Redix.command(conn, ["SQL", "", ttl, "DROP TABLE IF EXISTS Glue;", "CREATE TABLE Glue (id INTEGER);", "INSERT INTO Glue VALUES (100);", "INSERT INTO Glue VALUES (200);", "SELECT * FROM Glue WHERE id > 100;"])
 ## Convert the results to erlang terms
 Enum.map(results, &:erlang.binary_to_term/1)
@@ -56,8 +56,8 @@ Enum.map(results, &:erlang.binary_to_term/1)
 ```
 ## Cluster
 
-```
-{:ok, [name, cypher, pubkey, privkey]} = Redix.command(conn, ["CLUSTER"])
+```elixir
+{:ok, [cluster, cypher, pubkey, privkey]} = Redix.command(conn, ["CLUSTER"])
 ```
 
 ## Keys and pointers:

@@ -11,50 +11,107 @@ defmodule CrissCross.Application do
 
   # "2UPhq1AXgmhSd6etUcSQRPfm42mSREcjUixSgi9N8nU1YoC"
   @cluster_name Utils.encode_human(Utils.hash(Utils.combine_to_sign([@cypher, @public_key])))
-  @max_default_overlay_ttl 45 * 60 * 60 * 1000
 
   @process_name CrissCrossDHT.Server.Worker
 
   @default_udp 33333
 
-  def start(_type, _args) do
-    redis_url = System.get_env("REDIS_URL", "redis://localhost:6379")
+  def convert_ip(var, default) do
+    ip_to_bind = System.get_env(var, default)
 
-    node_id =
-      case System.get_env("NODE_SECRET", nil) do
-        node_id when is_binary(node_id) ->
-          with {:ok, priv} <- Utils.load_private_key(Utils.decode_human!(node_id)),
-               {:ok, pub} <- ExSchnorr.public_from_private(priv),
-               {:ok, bytes} <- ExSchnorr.public_to_bytes(pub) do
-            Utils.hash(bytes)
-          else
-            {:error, e} ->
-              raise "Invalid NODE_SECRET #{inspect(e)}"
-          end
+    [a, b, c, d] =
+      ip_to_bind
+      |> String.split(".")
+      |> Enum.map(&String.to_integer/1)
+
+    bind_ip = {a, b, c, d}
+    {ip_to_bind, bind_ip}
+  end
+
+  def bootstrap_nodes() do
+    System.get_env(
+      "BOOTSTRAP_NODES",
+      "udp://8thbnFn4HZ24vVojR5qV6jsLCoqMaeBAVSxioBLmzGzC@localhost:#{@default_udp}"
+    )
+    |> String.split(",")
+    |> Enum.map(fn c ->
+      case URI.parse(c) do
+        %URI{scheme: "udp", port: port, host: host, userinfo: userinfo}
+        when is_binary(userinfo) ->
+          %{node_id: userinfo, host: host, port: port || @default_udp}
 
         _ ->
-          {:ok, redis_conn} = Redix.start_link(redis_url)
-
-          ret =
-            case Redix.command(redis_conn, ["GET", "me"]) do
-              {:ok, node_id} when is_binary(node_id) ->
-                Logger.info("NODE_SECRET not found... loaded ID from storage")
-                node_id
-
-              {:ok, nil} ->
-                Logger.info("NODE_SECRET not found... generating random ID")
-                id = Utils.gen_node_id()
-                {:ok, _} = Redix.command(redis_conn, ["SET", "me", id])
-                id
-
-              {:error, e} ->
-                Logger.error("Redis not working #{inspect(e)}")
-                Utils.gen_node_id()
-            end
-
-          Redix.stop(redis_conn)
-          ret
+          raise "Invalid BOOTSTRAP_NODES config"
       end
+    end)
+  end
+
+  def node_id(store) do
+    case System.get_env("NODE_SECRET", nil) do
+      node_id when is_binary(node_id) ->
+        with {:ok, priv} <- Utils.load_private_key(Utils.decode_human!(node_id)),
+             {:ok, pub} <- ExSchnorr.public_from_private(priv),
+             {:ok, bytes} <- ExSchnorr.public_to_bytes(pub) do
+          Utils.hash(bytes)
+        else
+          {:error, e} ->
+            raise "Invalid NODE_SECRET #{inspect(e)}"
+        end
+
+      _ ->
+        ret =
+          case CrissCross.KVStore.get(store, "me") do
+            node_id when is_binary(node_id) ->
+              Logger.info("NODE_SECRET not found... loaded ID from storage")
+              node_id
+
+            nil ->
+              Logger.info("NODE_SECRET not found... generating random ID")
+              id = Utils.gen_node_id()
+              :ok = CrissCross.KVStore.put(store, "me", id)
+              id
+
+            e ->
+              Logger.error("Storage backend not working #{inspect(e)}")
+              Utils.gen_node_id()
+          end
+
+        ret
+    end
+  end
+
+  def get_backends(storage_backend) do
+    Logger.info("Setting up storage: #{storage_backend}")
+
+    case URI.parse(storage_backend) do
+      %URI{scheme: "sled", host: host, path: path} ->
+        Logger.info("Opening DB: #{Path.expand("#{host}#{path}")}")
+        {:ok, db} = SortedSetKV.open(Path.expand("#{host}#{path}"))
+        storage = {CrissCrossDHT.Server.DHTSled, [database: db]}
+
+        make_make_store = fn ->
+          fn hash, ttl -> CrissCross.Store.SledStore.create(db, hash, ttl) end
+        end
+
+        {storage, make_make_store}
+
+      %URI{scheme: "redis"} ->
+        storage = {CrissCrossDHT.Server.DHTRedis, [redis_opts: storage_backend]}
+
+        make_make_store = fn ->
+          {:ok, redis_conn} = Redix.start_link(storage_backend)
+          fn hash, ttl -> CrissCross.Store.Local.create(redis_conn, hash, ttl) end
+        end
+
+        {storage, make_make_store}
+
+      _ ->
+        raise "Invalid STORAGE_BACKEND config"
+    end
+  end
+
+  def start(_type, _args) do
+    storage_backend = System.get_env("STORAGE_BACKEND", "sled://./data")
 
     CrissCrossDHT.Registry.start()
 
@@ -66,77 +123,35 @@ defmodule CrissCross.Application do
     internal_tcp_port = System.get_env("INTERNAL_TCP_PORT", "11111") |> String.to_integer()
 
     auth = System.get_env("LOCAL_AUTH", "")
-    cluster_dir = System.get_env("CLUSTER_DIR", "./clusters") |> String.trim_trailing("?")
-    ip = System.get_env("EXTERNAL_IP", "127.0.0.1")
 
-    [a, b, c, d] =
-      ip
-      |> String.split(".")
-      |> Enum.map(&String.to_integer/1)
+    cluster_dir =
+      System.get_env("CLUSTER_DIR", "./clusters") |> String.trim_trailing("?") |> Path.expand()
 
-    external_ip = {a, b, c, d}
+    name_dir = System.get_env("NAME_DIR", "./names") |> String.trim_trailing("?") |> Path.expand()
 
-    bootstrap_nodes =
-      System.get_env(
-        "BOOTSTRAP_NODES",
-        "udp://8thbnFn4HZ24vVojR5qV6jsLCoqMaeBAVSxioBLmzGzC@localhost:#{@default_udp}"
-      )
-      |> String.split(",")
-      |> Enum.map(fn c ->
-        case URI.parse(c) do
-          %URI{scheme: "udp", port: port, host: host, userinfo: userinfo}
-          when is_binary(userinfo) ->
-            %{node_id: userinfo, host: host, port: port || @default_udp}
+    {ip, external_ip} = convert_ip("EXTERNAL_IP", "127.0.0.1")
+    {ip_to_bind, bind_ip} = convert_ip("BIND_IP", "127.0.0.1")
 
-          _ ->
-            raise "Invalid BOOTSTRAP_NODES config"
-        end
-      end)
+    bootstrap_nodes = bootstrap_nodes()
 
-    clusters =
-      Path.wildcard("#{cluster_dir}/*.yaml")
-      |> Enum.flat_map(fn cluster ->
-        case YamlElixir.read_from_string(File.read!(cluster)) do
-          {:ok,
-           %{
-             "Name" => name,
-             "MaxTTL" => max_ttl,
-             "Cypher" => cypher,
-             "PublicKey" => pubk
-           } = opts} ->
-            [
-              {name,
-               %{
-                 max_ttl: max_ttl,
-                 secret: cypher,
-                 public_key: pubk,
-                 private_key: Map.get(opts, "PrivateKey")
-               }}
-            ]
+    {storage, make_make_store} = get_backends(storage_backend)
 
-          _ ->
-            Logger.error("Invalid yaml file #{cluster}")
-            []
-        end
-      end)
-      |> Enum.into(%{
-        @cluster_name => %{
-          max_ttl: @max_default_overlay_ttl,
-          secret: @cypher,
-          public_key: @public_key
-        }
-      })
+    # Shared storage for meta data
+    {:ok, store} = make_make_store.().(nil, nil)
+    node_id = node_id(store)
 
     dht_config = %{
       bootstrap_overlay: bootstrap_overlay,
       port: udp_port,
       ipv4: true,
       ipv4_addr: external_ip,
+      ipv4_bind_addr: bind_ip,
       ipv6: false,
-      clusters: clusters,
+      cluster_dir: cluster_dir,
+      name_dir: name_dir,
       bootstrap_nodes: bootstrap_nodes,
       k_bucket_size: 12,
-      storage: {CrissCross.DHTStorage.DHTRedis, [redis_opts: redis_url]},
+      storage: storage,
       process_values_callback: fn cluster, value, ttl ->
         CrissCross.ValueCloner.queue(cluster, value, ttl)
       end
@@ -144,36 +159,51 @@ defmodule CrissCross.Application do
 
     children = [
       CrissCross.ConnectionCache,
+      CrissCross.ProcessQueue,
+      {Registry, keys: :duplicate, name: CrissCross.ConnectionRegistry},
+      Supervisor.child_spec(
+        {Cachex, name: :pids, expiration: expiration(default: :timer.minutes(10))},
+        id: :pids
+      ),
+      Supervisor.child_spec(
+        {Cachex, name: :tree_peers, expiration: expiration(default: :timer.minutes(1))},
+        id: :tree_peers
+      ),
       Supervisor.child_spec(
         {Cachex, name: :blacklisted_ips, expiration: expiration(default: :timer.minutes(10))},
         id: :blacklisted_ips
       ),
-      Supervisor.child_spec({Cachex, name: :node_cache}, id: :node_cache),
+      Supervisor.child_spec(
+        {Cachex,
+         name: :node_cache, limit: limit(size: 1000, policy: Cachex.Policy.LRW, reclaim: 0.1)},
+        id: :node_cache
+      ),
       {Task.Supervisor, name: CrissCross.TaskSupervisor},
       Supervisor.child_spec(
-        {Task, fn -> CrissCross.ExternalRedis.accept(external_tcp_port, redis_url) end},
+        {Task, fn -> CrissCross.ExternalRedis.accept(external_tcp_port, make_make_store) end},
         restart: :permanent,
         id: :external_redis
       ),
       Supervisor.child_spec(
         {Task,
          fn ->
-           CrissCross.InternalRedis.accept(internal_tcp_port, external_tcp_port, redis_url, auth)
+           CrissCross.InternalRedis.accept(
+             internal_tcp_port,
+             external_tcp_port,
+             make_make_store,
+             store,
+             auth
+           )
          end},
         restart: :permanent,
         id: :internal_redis
       ),
-      %{
-        start:
-          {Agent, :start_link,
-           [fn -> Utils.config(dht_config, :clusters) end, [name: CrissCross.ClusterConfigs]]},
-        id: CrissCross.ClusterConfigs
-      },
-      {CrissCross.ValueCloner, {redis_url, external_tcp_port}},
+      {CrissCross.ValueCloner, {make_make_store, external_tcp_port}},
       {CrissCrossDHT.Supervisor, node_id: node_id, worker_name: @process_name, config: dht_config}
     ]
 
     Logger.info("Exposing IP #{ip}")
+    Logger.info("Binding on #{ip_to_bind}")
     Logger.info("UDP accepting connections on port #{udp_port}")
     ## Start the main supervisor
     opts = [strategy: :one_for_one, name: CrissCross.Supervisor]

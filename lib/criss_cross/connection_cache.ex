@@ -9,6 +9,7 @@ defmodule CrissCross.ConnectionCache do
   require Logger
 
   @interval 60 * 1000
+  @ping_timeout 3000
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
@@ -20,6 +21,15 @@ defmodule CrissCross.ConnectionCache do
 
   def return(conn) do
     GenServer.cast(__MODULE__, {:return, conn})
+  end
+
+  def command({:unencrypted, conn, _}, command, arg, timeout) do
+    Redix.command(conn, [command, arg], timeout: timeout)
+  end
+
+  def command({:encrypted, conn, secret, _}, command, arg, timeout) do
+    payload = encrypt(secret, arg)
+    Redix.command(conn, [command, payload], timeout: timeout)
   end
 
   @impl true
@@ -67,7 +77,7 @@ defmodule CrissCross.ConnectionCache do
       ) do
     case conns do
       %{^ip_port => conn} ->
-        case Redix.command(conn, ["PING"]) do
+        case Redix.command(conn, ["PING"], timeout: @ping_timeout) do
           {:ok, "PONG"} ->
             case timers do
               %{^ip_port => timer} -> Process.cancel_timer(timer)
@@ -117,19 +127,22 @@ defmodule CrissCross.ConnectionCache do
     r =
       case Redix.start_link(
              host: "#{a}.#{b}.#{c}.#{d}",
-             port: port
+             port: port,
+             timeout: @ping_timeout
            ) do
         {:ok, conn} ->
           if @encrypt do
             {public_key, private_key} = :crypto.generate_key(:ecdh, :x25519)
 
-            case Redix.command(conn, ["EXCHANGEKEY", public_key]) do
+            case Redix.command(conn, ["EXCHANGEKEY", public_key], timeout: @ping_timeout) do
               {:ok, [other_public, token]} ->
                 secret = :crypto.compute_key(:ecdh, other_public, private_key, :x25519)
                 response = encrypt_cluster_message(cluster, token)
                 cluster_id_reponse = encrypt(secret, cluster)
 
-                case Redix.command(conn, ["VERIFY", cluster_id_reponse, response]) do
+                case Redix.command(conn, ["VERIFY", cluster_id_reponse, response],
+                       timeout: @ping_timeout
+                     ) do
                   {:ok, "OK"} ->
                     {:commit, {:encrypted, conn, secret, {remote_ip, port}}}
 

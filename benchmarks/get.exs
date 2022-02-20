@@ -14,12 +14,36 @@ crisscross_store = fn hash, ttl ->
   store
 end
 
+cql_store = fn hash, ttl ->
+  {:ok, conn} = Xandra.start_link(nodes: ["localhost:9042"], pool_size: 10)
+
+  {:ok, _} =
+    Xandra.execute(
+      conn,
+      "CREATE KEYSPACE IF NOT EXISTS crisscross WITH replication = {'class': 'SimpleStrategy', 'replication_factor' : 1};"
+    )
+
+  {:ok, _} =
+    Xandra.execute(
+      conn,
+      "CREATE TABLE IF NOT EXISTS crisscross.nodes (location blob PRIMARY KEY, value blob)"
+    )
+
+  {:ok, store} = CrissCross.Store.CQLStore.create(conn, hash, ttl)
+  store
+end
+
+sled_store = fn hash, ttl ->
+  {:ok, store} = CrissCross.Store.SledStore.create(db, hash, ttl)
+  store
+end
+
 small = "small value"
 {:ok, one_kb} = File.read("benchmarks/data/1kb")
 {:ok, one_mb} = File.read("benchmarks/data/1mb")
 {:ok, ten_mb} = File.read("benchmarks/data/10mb")
 n = 100
-
+# --redis_proxy_bind_address
 {:ok, pid} =
   Supervisor.start_link([Supervisor.child_spec({Cachex, name: :node_cache}, id: :node_cache)],
     strategy: :one_for_one
@@ -32,10 +56,10 @@ Benchee.run(
     end
   },
   inputs: %{
-    "small value" => {crisscross_store, small},
-    "1KB value" => {crisscross_store, one_kb},
-    "1MB value" => {crisscross_store, one_mb},
-    "10MB value" => {crisscross_store, ten_mb}
+    "small value" => {sled_store, small},
+    "1KB value" => {sled_store, one_kb},
+    "1MB value" => {sled_store, one_mb},
+    "10MB value" => {sled_store, ten_mb}
     # "small value ipfs" => {ipfs_store, small},
     # "small value mldht_store" => {mldht_store, small}
     # " value" => one_kb,

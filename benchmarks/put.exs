@@ -10,6 +10,38 @@ crisscross_store = fn ->
   store
 end
 
+{:ok, db} = SortedSetKV.open("mydb")
+
+sled_store = fn ->
+  {:ok, store} = CrissCross.Store.SledStore.create(db, nil, -1)
+  {:ok, db} = CubDB.start_link(store, [])
+  CubDB.put(db, "hello", "asdf")
+  store
+end
+
+cql_store = fn ->
+  {:ok, conn} = Xandra.start_link(nodes: ["localhost:9042"])
+
+  {:ok, _} =
+    Xandra.execute(
+      conn,
+      "CREATE KEYSPACE IF NOT EXISTS crisscross WITH replication = {'class': 'SimpleStrategy', 'replication_factor' : 1};"
+    )
+
+  {:ok, %Xandra.SetKeyspace{}} = Xandra.execute(conn, "USE crisscross")
+
+  {:ok, _} =
+    Xandra.execute(
+      conn,
+      "CREATE TABLE IF NOT EXISTS nodes (location blob PRIMARY KEY, value blob)"
+    )
+
+  {:ok, store} = CrissCross.Store.CQLStore.create(conn, nil, -1)
+  store
+end
+
+# cql_store.()
+
 {:ok, pid} =
   Supervisor.start_link([Supervisor.child_spec({Cachex, name: :node_cache}, id: :node_cache)],
     strategy: :one_for_one
@@ -35,9 +67,9 @@ Benchee.run(
     # "small value" => {redis_store, small, [auto_compact: false, auto_file_sync: false]},
     # "small value file" => {file_store, small, [auto_compact: false, auto_file_sync: false]},
     "small value file crisscross" =>
-      {crisscross_store, small, [auto_compact: false, auto_file_sync: false]},
+      {sled_store, small, [auto_compact: false, auto_file_sync: false]},
     "ten_mb value file crisscross" =>
-      {crisscross_store, ten_mb, [auto_compact: false, auto_file_sync: false]}
+      {sled_store, ten_mb, [auto_compact: false, auto_file_sync: false]}
     # "small value IPFS" => {ipfs_store, small, [auto_compact: false, auto_file_sync: false]}
     # "1KB value" => {redis_store, one_kb, [auto_compact: false, auto_file_sync: false]},
     # "1MB value" => {redis_store, one_mb, [auto_compact: false, auto_file_sync: false]},

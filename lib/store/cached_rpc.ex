@@ -3,12 +3,26 @@ defmodule CrissCross.Store.CachedRPC do
 
   # `CubDB.Store.CachedRPC` is an implementation of the `Store` protocol
 
-  defstruct conns: nil, local_store: nil, tree_hash: nil
+  defstruct conns: nil,
+            local_store: nil,
+            tree_hash: nil,
+            max_transfer: nil,
+            transfered_pid: nil
+
   alias CrissCross.Store.CachedRPC
   alias CrissCross.Utils
 
-  def create(conns, tree_hash, local) do
-    {:ok, %CachedRPC{conns: conns, tree_hash: tree_hash, local_store: local}}
+  def create(conns, tree_hash, local, max_transfer \\ nil) do
+    {:ok, transfered_pid} = Agent.start_link(fn -> 0 end)
+
+    {:ok,
+     %CachedRPC{
+       conns: conns,
+       tree_hash: tree_hash,
+       local_store: local,
+       max_transfer: max_transfer,
+       transfered_pid: transfered_pid
+     }}
   end
 end
 
@@ -17,6 +31,7 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
   import CrissCross.Utils
   alias CrissCross.Utils
   alias CrissCross.ConnectionCache
+  alias CrissCross.PeerGroup
   import CrissCrossDHT.Server.Utils, only: [encrypt: 2, decrypt: 2]
 
   require Logger
@@ -56,7 +71,7 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
       CubDB.Store.get_node(local_store, location)
     rescue
       Utils.MissingHashError ->
-        conns
+        PeerGroup.get_conns(conns, 5_000)
         |> Enum.shuffle()
         |> Enum.filter(fn conn ->
           Cachex.get(:blacklisted_ips, tuple(conn)) == {:ok, nil}
@@ -93,6 +108,26 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
         end)
         |> raise_if_nil(location)
     end
+    |> add_to_transfered(rpc)
+  end
+
+  def add_to_transfered(result, %CachedRPC{
+        transfered_pid: transfered_pid,
+        max_transfer: max_transfer
+      }) do
+    if max_transfer != nil do
+      new_bytes_transferred =
+        Agent.get_update(transfered_pid, fn old ->
+          new_size = old + :erlang.external_size(result)
+          {new_size, new_size}
+        end)
+
+      if new_bytes_transferred > max_transfer do
+        raise Utils.MaxTransferExceeded
+      end
+    end
+
+    result
   end
 
   def raise_if_nil(nil, {_, location}), do: raise(Utils.MissingHashError, encode_human(location))
@@ -108,11 +143,7 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
     end
   end
 
-  def close(%CachedRPC{conns: conns, local_store: local_store}) do
-    Enum.each(conns, fn conn ->
-      ConnectionCache.return(conn)
-    end)
-
+  def close(%CachedRPC{local_store: local_store}) do
     CubDB.Store.close(local_store)
   end
 

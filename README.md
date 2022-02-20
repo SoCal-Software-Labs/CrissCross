@@ -1,6 +1,6 @@
 # CrissCross - Like IPFS... but with Redis Protocol, a SQL Layer, Privacy and Distribution as well as File Downloads
 
-CrissCross is a new way to share immutable structures. Build a tree, get a hash and distribute it in your own private cluster. Connect with any language that has a redis client. Store data in high speed, Redis compatible, databases.
+CrissCross is a new way to share immutable structures. Build a tree, get a hash and distribute it in your own private cluster. Connect with any language that has a redis client. Store data in high speed databases.
 
 ## Status
 
@@ -23,28 +23,33 @@ Another important consideration is that CrissCross is private. IPFS on the other
 * Store polymorphic data like lists, integers, dictionaries and tuples
 * Broadcast data to the network preemptively - Collaborative caching
 * Configurable Maximum TTL for each cluster - Store data for as long as you need
-* Built with Redis and Elixir for maximum performance and reliability
 * Simple clear protocol - Access from any language that has a Redis client
 * Fast downloads with multiple connections
 * Remotely access trees on other peoples machines to clone or query
 * IPNS-like mutable pointers
 * Encryption per cluster
 * Efficiently iterate over large collections
+* Built in high performance embedded database or use any Redis compatible DB
 
+## Related Packages
+
+* [CrissCrossDHT](https://github.com/SoCal-Software-Labs/CrissCrossDHT) A Kademlia Distributed Hash Table
+* [SortedSetKV](https://github.com/SoCal-Software-Labs/SortedSetKV) High-Performance binding for the Sled Database
+* [ExSchnorr](https://github.com/hansonkd/ex_schnorr) Cryptographic Signatures
+* [CrissCrossPy](https://github.com/SoCal-Software-Labs/crisscross_py) Python client for CrissCross
 
 # Tour
 
-
 ### Docker script
 
-CrissCross comes distributed as a script which launches docker containers for the CrissCross server as well as a KeyDB instance. KeyDB is a Redis compatible database which allows larger than memory storage. All you need installed is the docker daemon.
+CrissCross comes distributed as a script which launches docker container for the CrissCross server.
 
 ```bash
 curl https://raw.githubusercontent.com/SoCal-Software-Labs/CrissCross/main/launch_crisscross_server.sh -o ./launch_criss_cross.sh
 chmod +x ./launch_criss_cross.sh
 ```
 
-And finally execute the command to launch the database and server to connect to the overlay. By default KeyDB will store data in `./data` and CrissCross will look for cluster configurations in `./clusters` of the directory you launch the script in.
+And finally execute the command to launch the database and server to connect to the overlay. By default CrissCross will store data in `./data` and will look for cluster configurations in `./clusters` of the directory you launch the script in.
 
 ```bash
 ./launch_criss_cross.sh
@@ -72,22 +77,14 @@ $ crisscross get $MYVAR "hello"
 world
 ```
 
-#### Python
+#### Programatic Access
 
 You can access the tree programmatically with Python (or any Redis client):
 
-```python 
->>> client = CrissCross()
->>> location = client.put_multi("", [("hello", "world")])
-# In the python client you manipulate the raw hash bytes, not the Base58 Representation
->>> base58.b58encode(location)
-b'2UPodno55iocZqNGGav5MXi6LsFFqqzDvgQm5A9Qr3pebns'
->>> client.get_multi(location, ["hello"])
-b"world"
-``````
-With python you can store arbitrary data... tuples, lists, dictionaries, booleans, integers, floats and atoms. Not just binary text:
+Store arbitrary data... tuples, lists, dictionaries, booleans, integers, floats and atoms. Not just binary text:
 
-```python 
+```python
+>>> client = CrissCross()
 >>> location = client.put_multi("", [(("wow", 1.2), {1: (True, None)})])
 >>> client.get_multi(location, [("wow", 1.2)])
 {1: (True, None)}
@@ -97,13 +94,6 @@ With python you can store arbitrary data... tuples, lists, dictionaries, boolean
 
 Update a tree by referencing the hash of its previous state:
 
-#### Python
-
-```python 
->> new_location = client.put_multi(location, [("cool", 12345)])
->> client.get(new_location, "cool")
-12345
-``````
 
 #### Bash
 
@@ -176,7 +166,7 @@ True
 This enables several interesting usecases:
 
 * Collaborative Caching - Everybody has the key and accepts other peoples data
-* PubSub like Distribution - One person has the key, with a group of peers following for updates and redistributing it.
+* PubSub like Distribution - One person has the key, with a group of peers following for updates and redistributing
 * Private Hosting - Agree with nodes for them to host your data, encrypt it and send it to them with an infinite TTL
 
 Any data that has a TTL larger than your MaxTTL of the cluster will be rejected so its important for the cluster to agree beforehand. 
@@ -185,56 +175,22 @@ You can disable this feature by destroying the PrivateKey after generating the c
 
 ## SQL Engine
 
-From Python or Redis you can access the SQL engine. Currently its rather limited (no ALTER TABLE staments and no INDEX support). Those things are supported by the engine ([GlueSQL](https://github.com/gluesql/gluesql)) however are not currently connected to the storage layer and need to be hooked up.
+From Python or Redis you can access the SQL engine to run complex SQL queries on immutable trees. Currently its rather limited (no ALTER TABLE staments and no INDEX support). Those things are supported by the engine ([GlueSQL](https://github.com/gluesql/gluesql)) however are not currently connected to the storage layer and need to be hooked up.
 
-
-```python
->> client = CrissCross()
->>> location, ret = client.sql("", "CREATE TABLE MyCrissCrossTable (id INTEGER);")
->>> print(ret) # Get the result of the execution
-[(Atom(b'ok'), b'Create')]
->>> location2, _ = client.sql(location, "INSERT INTO MyCrissCrossTable VALUES (100);")
->>> location3, _ = client.sql(location2, "INSERT INTO MyCrissCrossTable VALUES (200);")
-# When reading from a table, use the read variant to avoid setting TTL on nodes
->>> ret = client.sql_read(location3, "SELECT * FROM MyCrissCrossTable WHERE id > 100;")
->>> print(ret[0][1])
-{b'Select': {b'labels': [b'id'], b'rows': [[{b'I64': 200}]]}}
-```
-Execute many statements at once:
-
-```python
->>> location, sqlreturns = client.sql("", "CREATE TABLE MyCrissCrossTable (id INTEGER);", "INSERT INTO MyCrissCrossTable VALUES (100);", "INSERT INTO MyCrissCrossTable VALUES (200);", "SELECT * FROM MyCrissCrossTable WHERE id > 100;")
->>> print(sqlreturns)
-[(Atom(b'ok'), b'Create'), (Atom(b'ok'), {b'Insert': 1}), (Atom(b'ok'), {b'Insert': 1}), (Atom(b'ok'), {b'Select': {b'labels': [b'id'], b'rows': [[{b'I64': 200}]]}})]
-```
-
-## Data TTLs
-
-Data will be continuously cleaned up by the Redis backend based on a TTL. You can extend the life of the data of a tree by using `persist` command with a TTL in milliseconds of how long you want to keep the nodes in the tree. A TTL of -1 means to keep the tree forever. Announcing a tree will also update the nodes' TTLs. TTLs are always monotonic, once set they only go forward.
-
-By default, data you create will be around for 24h before getting cleaned up. When new nodes are added to a tree, the old nodes' TTLs are not updated. If you are continuously updating a tree, it is your job to use a TTL that will keep all the nodes of the tree around (ie `-1` or a long expiration). Use persist or announce at regular checkpoints to keep the data alive.
-
-```bash
-# Insert new nodes into a tree with a TTL of 3,000,000,000ms (Approximately 35days)
-$ crisscross put "" "hello" "world" --ttl=3000000000
-2UPodno55iocZqNGGav5MXi6LsFFqqzDvgQm5A9Qr3pebns
-# When updating a node with a higher TTL, be aware that the old nodes' TTLs will not be updated.
-# This can lead to incomplete trees so its important to update the old nodes TTLs if needed
-$ crisscross put "2UPodno55iocZqNGGav5MXi6LsFFqqzDvgQm5A9Qr3pebns" "hello2" "world2" --ttl=36000000000
-2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
-# To update all the TTLs in a tree, call persist with a new TTL
-$ crisscross persist "2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M" --ttl=36000000000
-True
-# A TTL of -1 is equal to infinity and will permanently store the data. -1 is the default of persist
-$ crisscross persist "2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M"
-True
-```
-
-There is currently not a built in way to reset TTLs for a tree. You will need to start a new node with a new database and clone the tree into it.
+For more usage see the [Python client example](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Python-Client#sql)
 
 # Speed
 
-For small values, CrissCross can be about 10-200x faster than inserting and announcing to IPFS over HTTP. For large values, the primary speed consideration (besides disk speed) is hashing. CrissCross uses Blake2, however switching to a non-cryptographic hash (like xxH3) increases the performance of inserting 10mb chunks by about 2-5x.
+For small values, CrissCross can be about 10-500x faster than inserting and announcing to IPFS over HTTP. For large values, the primary speed consideration (besides disk speed) is hashing. CrissCross uses Blake2, however switching to a non-cryptographic hash (like xxH3) increases the performance of inserting 10mb chunks by about 2-5x.
 
 In the future there may be an option for a non-cryptographic CrissCross with embedded storage for maximum performance.
 
+# Further Reading
+
+* [Getting Started](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Getting-Started)
+* [Understanding TTLs](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Understanding-TTLs)
+* [Compaction](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Compaction)
+* [Using Redis](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Redis-Example)
+* [Redis API](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Redis-API)
+* [Using Python](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Python-Client)
+* [Redis API](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Redis-API)

@@ -30,3 +30,5 @@ iron_cub-*.tar
 /clusters/
 
 /__pycache__/
+
+/data/

@@ -269,11 +269,11 @@ defmodule CrissCross do
 
     get_children = fn
       {@value, value} = node, _store ->
-        Agent.update(agent, fn acc -> acc + byte_size(:erlang.term_to_binary(node)) end)
+        Agent.update(agent, fn acc -> acc + :erlang.external_size(node) end)
         value
 
       {_, locs} = node, store ->
-        Agent.update(agent, fn acc -> acc + byte_size(:erlang.term_to_binary(node)) end)
+        Agent.update(agent, fn acc -> acc + :erlang.external_size(node) end)
 
         locs
         |> Enum.map(fn {k, loc} ->
