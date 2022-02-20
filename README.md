@@ -1,6 +1,6 @@
-# CrissCross - Like if IPFS was also a Real-Time Distributed Computing Network
+# CrissCross - Like if IPFS was also a Distributed Computing Network
 
-CrissCross is a new way to share immutable structures and call remote procedures. Build a tree, get a hash and distribute it in your own private cluster. Generate a key and advertise a service on the cluster. Connect with any language that has a redis client. Store data in high speed databases.
+CrissCross is a new way to share immutable structures and call remote procedures. Build a tree, get a hash and distribute it in your own private cluster. Build a service by generating a key and advertising on the cluster. Connect with any language that has a redis client. Store data in high speed databases.
 
 ## Status
 
@@ -16,10 +16,13 @@ CrissCross is built to query data on remote machines without downloading the who
 
 Another important consideration is that CrissCross is private. IPFS on the otherhand is a public network where everyone is on the same DHT. CrissCross consists of virtual clusters. There is one shared overlay network that bootstraps you into your cluster. Inside your cluster the data stays private and encrypted over the wire. You can even supply your own overlay cluster and bootstrap nodes for maximum privacy.
 
+CrissCross also exposes high-performance Remote Procedure Call services on the cluster. These services are protected by a private key and every response is signed. Unlike immutable trees, these services can provide real-time data feeds or perform actions. RPC services can be written in any language that has a redis client.
+
 # Features
 
 * Content-Addressable Immutable Key Value Trees, SQL Engine and File System
-* Private Clusters - Setup a cluster of nodes to securely share trees between them
+* Verified remote RPCs with load balancing without centralization
+* Private Clusters - Setup a cluster of nodes to securely share trees and services between them
 * Store polymorphic data like lists, integers, dictionaries and tuples
 * Broadcast data to the network preemptively - Collaborative caching
 * Configurable Maximum TTL for each cluster - Store data for as long as you need
@@ -29,7 +32,9 @@ Another important consideration is that CrissCross is private. IPFS on the other
 * IPNS-like mutable pointers
 * Encryption per cluster
 * Efficiently iterate over large collections
-* Built in high performance embedded database or use any Redis compatible DB
+* Built in high performance embedded database
+* Rate limiting and connection bouncing
+
 
 ## Related Packages
 
@@ -42,7 +47,7 @@ Another important consideration is that CrissCross is private. IPFS on the other
 
 ### Docker script
 
-CrissCross comes distributed as a script which launches docker container for the CrissCross server.
+CrissCross comes distributed as a script which launches a docker container for the CrissCross server.
 
 ```bash
 curl https://raw.githubusercontent.com/SoCal-Software-Labs/CrissCross/main/launch_crisscross_server.sh -o ./launch_criss_cross.sh
@@ -69,12 +74,13 @@ With CrissCross you insert data into a hash and get a new hash in return. To sta
 #### Bash
 
 ```bash 
-$ MYVAR=$(crisscross put "" "hello" "world")
-# In the bash you get the Base58 Representation
-$ echo $MYVAR
+# In bash you get the Base58 Representation
+$ crisscross put "" "hello" "world"
 2UPodno55iocZqNGGav5MXi6LsFFqqzDvgQm5A9Qr3pebns
-$ crisscross get $MYVAR "hello"
+$ crisscross get 2UPodno55iocZqNGGav5MXi6LsFFqqzDvgQm5A9Qr3pebns "hello"
 world
+$ crisscross put 2UPodno55iocZqNGGav5MXi6LsFFqqzDvgQm5A9Qr3pebns "hello2" "world2"
+2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
 ```
 
 #### Programatic Access
@@ -89,18 +95,6 @@ Store arbitrary data... tuples, lists, dictionaries, booleans, integers, floats 
 >>> client.get_multi(location, [("wow", 1.2)])
 {1: (True, None)}
 ``````
-
-## Updates
-
-Update a tree by referencing the hash of its previous state:
-
-
-#### Bash
-
-```bash 
-$ crisscross put $MYVAR "hello2" "world2"
-2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
-```
 
 ## Cluster Basics
 
@@ -157,6 +151,18 @@ $ crisscross get 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M "hello"
 
 One thing CrissCross does differently than IPFS is preemptive distribution. If you have the PrivateKey, you can ask the cluster to store your tree. When you push a tree, you use the DHT to find 8 nodes and ask them to store the value. If they agree, they will connect to your node and download the tree and announce it as available for download, keeping it for the specified TTL.
 
+To enable the feature, when distributing your cluster yaml file to peers, include `MaxAcceptedSize` and list the bytes of the Maximum download size you are willing to accept.
+
+```yaml
+# clusters/my_cluster.yaml
+Name:            2UPkZmzFeeux8C5kVgVXRWMomgZfdHZ4yv2SqndCLrM4PNX
+Cypher:          6NDdi5uVtPszZMHTYxt3n7rSiovLuMF1fQJtioz79ND2
+PublicKey:       2bDkyNhW9LBRDFpU18XHCY4LiCGTvrBbtyef2YLLQNztv6qW2TQJB98
+PrivateKey:      wnpv357S2QpEPQTBMehzvf68uTezpnC36XS6XxFxu6nfwFNqaiZFW28x94ELF3JgHxFSyrqx6BUuE3KBpwgoQjEwLkPie5URph
+MaxTTL:          86400000
+MaxAcceptedSize: 10000000 # ~10mb
+```
+
 ```bash
 # Push a tree onto the cluster 
 $ crisscross push *clusters/my_cluster.yaml#Name 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
@@ -171,7 +177,46 @@ This enables several interesting usecases:
 
 Any data that has a TTL larger than your MaxTTL of the cluster will be rejected so its important for the cluster to agree beforehand. 
 
-You can disable this feature by destroying the PrivateKey after generating the cluster configuration.
+You can disable this feature by destroying the PrivateKey after generating the cluster configuration or by setting MaxAcceptedSize to 0.
+
+## RPC
+
+Generate a new keypair to announce the service under.
+
+```bash
+crisscross keypair > names/my_key.yaml
+```
+#### Server
+
+Get a job from the queue. Block until the timeout in ms or a job enters the queue. When you respond, CrissCross will automatically sign the response for you. You can serve multiple responses concurrently off of one connection by using threads or multithreaded queues. By responding with the reference, CrissCross will automatically route the reply to the correct client, regardless of the order you respond.
+
+
+```python
+import crisscross as cx
+
+client = cx.CrissCross()
+service = cx.read_var("*names/my_key.yaml#Name")
+cluster = cx.read_var("*defaultcluster")
+client.job_announce(cluster, service)
+while True:
+    method, arg, ref = client.job_get(service, timeout=9999999)
+    if method == "add_one":
+        arg = arg + 1
+        client.job_respond(ref, arg, service)
+```
+
+#### Client
+
+Send a job to the server:
+
+```python
+client = cx.CrissCross()
+service = cx.read_var("*names/my_key.yaml#Name")
+cluster = cx.read_var("*defaultcluster")
+result, signature = client.remote_job_do(cluster, service, "add_one", 42)
+print(resp)
+print(client.job_verify(service, "method", 42, result, signature, service))
+```
 
 ## SQL Engine
 
