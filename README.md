@@ -188,7 +188,7 @@ crisscross keypair > names/my_key.yaml
 ```
 #### Server
 
-Get a job from the queue. Block until the timeout in ms or a job enters the queue. When you respond, CrissCross will automatically sign the response for you. You can serve multiple responses concurrently off of one connection by using threads or multithreaded queues. By responding with the reference, CrissCross will automatically route the reply to the correct client, regardless of the order you respond.
+Get a job from the queue. Block until the timeout in ms or a job enters the queue. When you respond, CrissCross will automatically sign the response for you. You can serve multiple responses concurrently off of one connection by using threads or multithreaded queues. You can even serve results out of order. When you respond with the reference, CrissCross will automatically route the reply to the waiting client.
 
 
 ```python

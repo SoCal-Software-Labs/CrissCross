@@ -28,7 +28,7 @@ EXTERNAL_UDP_PORT="${EXTERNAL_UDP_PORT:-33333}"
 CLUSTER_DIR="${CLUSTER_DIR:-$(pwd)/clusters}"
 DATA_DIR="${DATA_DIR:-$(pwd)/data}"
 STORAGE_BACKEND="${STORAGE_BACKEND:-sled:///data}"
-EXTERNAL_IP=$(dig @resolver4.opendns.com myip.opendns.com +short)
+EXTERNAL_IP="${EXTERNAL_IP:-$(dig @resolver4.opendns.com myip.opendns.com +short)}"
 
 mkdir -p $DATA_DIR
 
