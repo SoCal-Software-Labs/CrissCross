@@ -7,17 +7,19 @@ defmodule CrissCross.Store.CachedRPC do
             local_store: nil,
             tree_hash: nil,
             max_transfer: nil,
-            transfered_pid: nil
+            transfered_pid: nil,
+            cluster: nil
 
   alias CrissCross.Store.CachedRPC
   alias CrissCross.Utils
 
-  def create(conns, tree_hash, local, max_transfer \\ nil) do
+  def create(conns, cluster, tree_hash, local, max_transfer \\ nil) do
     {:ok, transfered_pid} = Agent.start_link(fn -> 0 end)
 
     {:ok,
      %CachedRPC{
        conns: conns,
+       cluster: cluster,
        tree_hash: tree_hash,
        local_store: local,
        max_transfer: max_transfer,
@@ -35,6 +37,8 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
   import CrissCrossDHT.Server.Utils, only: [encrypt: 2, decrypt: 2]
 
   require Logger
+
+  @get_timeout 10_000
 
   def identifier(local) do
     local.tree_hash
@@ -66,7 +70,10 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
 
   def sync(%CachedRPC{}), do: :ok
 
-  def get_node(%CachedRPC{conns: conns, local_store: local_store} = rpc, {_, hash_loc} = location) do
+  def get_node(
+        %CachedRPC{conns: conns, cluster: cluster, local_store: local_store} = rpc,
+        {_, hash_loc} = location
+      ) do
     try do
       CubDB.Store.get_node(local_store, location)
     rescue
@@ -77,7 +84,7 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
           Cachex.get(:blacklisted_ips, tuple(conn)) == {:ok, nil}
         end)
         |> Enum.reduce_while(nil, fn conn, acc ->
-          case do_get(conn, location) do
+          case do_get(conn, cluster, location) do
             {:ok, value} when is_binary(value) ->
               case do_decrypt(conn, value) do
                 real_value when is_binary(real_value) ->
@@ -155,13 +162,30 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
     Process.alive?(local_store)
   end
 
-  def do_get({:unencrypted, conn, _}, {_, location}) do
-    Redix.command(conn, ["GET", location])
-  end
+  def do_get({:quic, endpoint, conn, _}, cluster, {_, location}) do
+    encrypted = encrypt_cluster_message(cluster, location)
 
-  def do_get({:encrypted, conn, secret, _}, {_, location}) do
-    payload = encrypt(secret, location)
-    Redix.command(conn, ["GET", payload])
+    ret =
+      ExP2P.bidirectional(
+        endpoint,
+        conn,
+        serialize_bert(["GET", cluster, encrypted]),
+        @get_timeout
+      )
+
+    case ret do
+      {:ok, res_encrypted} ->
+        case decrypt_cluster_message(cluster, res_encrypted) do
+          decrypted when is_binary(decrypted) ->
+            deserialize_bert(decrypted)
+
+          e ->
+            e
+        end
+
+      e ->
+        e
+    end
   end
 
   def do_decrypt({:unencrypted, _conn, _}, msg) do

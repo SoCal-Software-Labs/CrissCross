@@ -27,7 +27,7 @@ defmodule CrissCross.InternalRedis do
     "BYTESWRITTEN"
   ]
 
-  def accept(port, external_port, make_make_store, store, auth) do
+  def accept(port, external_port, make_make_store, store, auth, tunnel_token) do
     {:ok, socket} = :gen_tcp.listen(port, [:binary, active: true, reuseaddr: true])
     Logger.info("Internal TCP accepting connections on port #{port}")
 
@@ -39,7 +39,8 @@ defmodule CrissCross.InternalRedis do
       authed: false,
       external_port: external_port,
       store: store,
-      make_store: make_store
+      make_store: make_store,
+      tunnel_token: tunnel_token
     })
   end
 
@@ -48,7 +49,11 @@ defmodule CrissCross.InternalRedis do
 
     {:ok, pid} =
       Task.Supervisor.start_child(CrissCross.TaskSupervisor, fn ->
-        serve(client, %{continuation: nil}, state)
+        serve(
+          client,
+          %{continuation: nil},
+          Map.merge(state, %{socket: client, streams: %{}, subscriptions: %{}})
+        )
       end)
 
     :ok = :gen_tcp.controlling_process(client, pid)
@@ -56,7 +61,7 @@ defmodule CrissCross.InternalRedis do
     loop_acceptor(socket, state)
   end
 
-  defp serve(socket, %{continuation: nil} = cont, state) do
+  defp serve(socket, %{continuation: nil}, state) do
     receive do
       {:tcp, ^socket, data} -> handle_parse(socket, Redix.Protocol.parse(data), state)
       {:tcp_closed, ^socket} -> :ok
@@ -90,6 +95,9 @@ defmodule CrissCross.InternalRedis do
             DecoderError ->
               {encode_redis_error("Invalid BERT encoding"), state}
 
+            MissingClusterError ->
+              {encode_redis_error("Cluster not configured"), state}
+
             e in MissingHashError ->
               {encode_redis_error("Storage is missing value for hash #{e.message}"), state}
           end
@@ -116,7 +124,7 @@ defmodule CrissCross.InternalRedis do
               CrissCross.Store.CacheStore.create()
             end
 
-          CachedRPC.create(pid, hash, store)
+          CachedRPC.create(pid, cluster, hash, store)
         end
 
         try do
@@ -185,17 +193,23 @@ defmodule CrissCross.InternalRedis do
                 Enum.reduce_while(
                   1..max_attempts,
                   {:error, %Redix.Error{message: "No connections"}},
-                  fn attempt, _e ->
-                    conns = PeerGroup.get_conns(peer_group, min(timeout, 5_000))
+                  fn attempt, last_err ->
                     time_left = timeout - (:os.system_time(:millisecond) - now)
+
+                    conns =
+                      if time_left > 0 do
+                        PeerGroup.get_conns(peer_group, min(time_left, 5_000))
+                      else
+                        []
+                      end
 
                     case conns do
                       [] ->
                         if attempt < max_attempts do
-                          Process.sleep(min(div(time_left, max_attempts), 500))
+                          Process.sleep(500)
                         end
 
-                        {:cont, {:error, %Redix.Error{message: "No connections"}}}
+                        {:cont, last_err}
 
                       _ ->
                         conn = Enum.random(conns)
@@ -204,17 +218,24 @@ defmodule CrissCross.InternalRedis do
                           ConnectionCache.command(
                             conn,
                             "DO",
-                            serialize_bert({tree, method, arg, time_left}),
+                            cluster,
+                            serialize_bert([tree, method, arg, time_left]),
                             time_left
                           )
 
                         case result do
                           {:error, e} ->
                             PeerGroup.bad_conn(peer_group, conn)
-                            {:cont, e}
+                            {:cont, {:error, e}}
 
-                          {:ok, res} ->
-                            {:halt, {:ok, res}}
+                          {:ok, res_encrypted} ->
+                            case decrypt_cluster_message(cluster, res_encrypted) do
+                              decrypted when is_binary(decrypted) ->
+                                {:halt, {:ok, decrypted}}
+
+                              e ->
+                                {:cont, e}
+                            end
                         end
                     end
                   end
@@ -227,6 +248,9 @@ defmodule CrissCross.InternalRedis do
             Enum.map(results, fn
               {:ok, [result, signature]} ->
                 [encode_redis_list([result, signature])]
+
+              {:error, e} when is_binary(e) ->
+                [encode_redis_string(e)]
 
               {:error, e} ->
                 [encode_redis_string(Exception.message(e))]
@@ -252,6 +276,181 @@ defmodule CrissCross.InternalRedis do
     else
       {encode_redis_error("Invalid credentials"), state}
     end
+  end
+
+  def subscribe_loop(tree, socket, stop_ref) do
+    CrissCross.ProcessQueue.get_next(tree)
+
+    receive do
+      {:queue_response, {query, method, arg_bin, timeout, ref, pid} = resp} ->
+        to_send =
+          serialize_bert([
+            method,
+            arg_bin,
+            ref
+          ])
+
+        Cachex.put!(:pids, ref, {pid, query}, ttl: timeout * 2)
+
+        res = :gen_tcp.send(socket, encode_redis_list(["message", tree, to_send]))
+
+        case res do
+          :ok ->
+            subscribe_loop(tree, socket, stop_ref)
+
+          {:error, e} ->
+            CrissCross.ProcessQueue.add_to_queue(tree, resp)
+            :ok
+        end
+
+      {:stop, ^stop_ref} ->
+        :ok
+    end
+  end
+
+  def subscribe_loop_send(socket, ref) do
+    {socket, to_send} =
+      receive do
+        {^ref, :socket, socket} ->
+          {socket, nil}
+
+        {:new_stream_message, msg} ->
+          {socket, deserialize_bert(msg)}
+
+        :stream_finished ->
+          {socket, :stop}
+
+        {^ref, :stop} ->
+          {socket, :stop}
+      end
+
+    if to_send != :stop do
+      if to_send != nil and socket != nil do
+        res =
+          case to_send do
+            {:ok, s} ->
+              :gen_tcp.send(socket, encode_redis_list(["pmessage", ref, "", serialize_bert(s)]))
+
+            {:error, e} ->
+              :gen_tcp.send(socket, encode_redis_list(["pmessage", ref, "", serialize_bert([e])]))
+          end
+
+        case res do
+          :ok -> subscribe_loop_send(socket, ref)
+          _ -> :ok
+        end
+      else
+        subscribe_loop_send(socket, ref)
+      end
+    end
+  end
+
+  def subscribe_loop_send_local(socket, ref) do
+    {socket, to_send} =
+      receive do
+        {^ref, :socket, socket} ->
+          {socket, nil}
+
+        {^ref, resp, signature} ->
+          {socket, serialize_bert([resp, signature])}
+
+        {^ref, :stop} ->
+          {socket, :stop}
+      end
+
+    if to_send != :stop do
+      if to_send != nil and socket != nil do
+        res =
+          :gen_tcp.send(
+            socket,
+            encode_redis_list(["pmessage", ref, "", to_send])
+          )
+
+        case res do
+          :ok -> subscribe_loop_send_local(socket, ref)
+          _ -> :ok
+        end
+      else
+        subscribe_loop_send_local(socket, ref)
+      end
+    end
+  end
+
+  def handle_subscription(
+        ["PSUBSCRIBE", ref],
+        %{subscriptions: subscriptions, socket: socket} = state
+      ) do
+    :gen_tcp.send(socket, encode_redis_list(["psubscribe", ref, 1]))
+
+    case Cachex.get!(:waiting_streams, ref) do
+      {pid, ref} ->
+        send(pid, {ref, :socket, socket})
+        {"", %{state | subscriptions: Map.put(subscriptions, ref, {pid, ref})}}
+
+      nil ->
+        {"", state}
+    end
+  end
+
+  def handle_subscription(
+        ["SUBSCRIBE", tree],
+        %{subscriptions: subscriptions, socket: socket} = state
+      ) do
+    if Map.has_key?(subscriptions, tree) do
+      :gen_tcp.send(socket, encode_redis_list(["subscribe", tree, 1]))
+      {"", state}
+    else
+      stop_ref = make_ref()
+
+      {:ok, pid} =
+        Task.Supervisor.start_child(CrissCross.TaskSupervisor, fn ->
+          subscribe_loop(tree, socket, stop_ref)
+        end)
+
+      res = :gen_tcp.send(socket, encode_redis_list(["subscribe", tree, 1]))
+
+      {"", %{state | subscriptions: Map.put(subscriptions, tree, {pid, stop_ref})}}
+    end
+  end
+
+  def handle_subscription(
+        ["UNSUBSCRIBE", tree],
+        %{subscriptions: subscriptions, socket: socket} = state
+      ) do
+    case Map.pop(subscriptions, tree) do
+      {{pid, ref}, new_map} ->
+        send(pid, {ref, :stop})
+        :gen_tcp.send(socket, encode_redis_list(["unsubscribe", tree, 0]))
+        {"", %{state | subscriptions: new_map}}
+
+      {nil, new_map} ->
+        :gen_tcp.send(socket, encode_redis_list(["unsubscribe", tree, 0]))
+        {"", %{state | subscriptions: new_map}}
+    end
+  end
+
+  def handle_subscription(
+        ["PUNSUBSCRIBE", ref],
+        %{subscriptions: subscriptions, socket: socket} = state
+      ) do
+    case Map.pop(subscriptions, ref) do
+      {{pid, ref}, new_map} ->
+        send(pid, {ref, :stop})
+        :gen_tcp.send(socket, encode_redis_list(["punsubscribe", ref, 0]))
+        {"", %{state | subscriptions: new_map}}
+
+      {nil, new_map} ->
+        :gen_tcp.send(socket, encode_redis_list(["punsubscribe", ref, 0]))
+        {"", %{state | subscriptions: new_map}}
+    end
+  end
+
+  def handle_subscription(["RESET"], %{subscriptions: subscriptions} = state) do
+    Enum.each(subscriptions, fn {_, {pid, ref}} ->
+      send(pid, {ref, :stop})
+    end)
+
+    {redis_ok(), %{state | subscriptions: %{}}}
   end
 
   def handle_iter(["ITERSTART", tree], %{make_store: make_store} = state) do
@@ -306,8 +505,17 @@ defmodule CrissCross.InternalRedis do
     {encode_redis_error("Not Authenticated"), state}
   end
 
+  def handle([command | rest], state)
+      when command in ["SUBSCRIBE", "PUNSUBSCRIBE", "PSUBSCRIBE", "UNSUBSCRIBE", "RESET"] do
+    handle_subscription([command | rest], state)
+  end
+
   def handle([command | rest], state) when command in ["ITERSTART", "ITERNEXT", "ITERSTOP"] do
     handle_iter([command | rest], state)
+  end
+
+  def handle(_, %{subscriptions: subscriptions} = state) when map_size(subscriptions) > 0 do
+    {encode_redis_error("In PubSub Mode"), state}
   end
 
   def handle(_, %{iterator: it} = state) when is_pid(it) do
@@ -366,29 +574,37 @@ defmodule CrissCross.InternalRedis do
     end
   end
 
+  def handle_stateless(["JOBLOCAL", name, ttl], _state) do
+    case Integer.parse(ttl) do
+      {num, _} when num >= -1 ->
+        Cachex.put!(:local_jobs, name, ttl: DHTUtils.adjust_ttl(num))
+        redis_ok()
+
+      _ ->
+        encode_redis_error("Invalid TTL")
+    end
+  end
+
   def handle_stateless(["JOBANNOUNCE", cluster, tree, ttl], %{
         external_port: external_port
       }) do
-    ret =
-      case Integer.parse(ttl) do
-        {num, _} when num >= -1 ->
-          CrissCrossDHT.search_announce(
-            cluster,
-            tree,
-            fn _node ->
-              :ok
-            end,
-            num,
-            external_port
-          )
+    case Integer.parse(ttl) do
+      {num, _} when num >= -1 ->
+        CrissCrossDHT.search_announce(
+          cluster,
+          tree,
+          fn _node ->
+            :ok
+          end,
+          num,
+          external_port
+        )
 
-          redis_ok()
+        redis_ok()
 
-        _ ->
-          encode_redis_error("Invalid TTL")
-      end
-
-    ret
+      _ ->
+        encode_redis_error("Invalid TTL")
+    end
   end
 
   def handle(
@@ -431,7 +647,7 @@ defmodule CrissCross.InternalRedis do
               [method, argument | rest]
               |> Enum.chunk_every(2)
               |> Enum.map(fn [k, v] ->
-                ref = make_ref()
+                ref = make_job_ref()
 
                 :ok =
                   CrissCross.ProcessQueue.add_to_queue(
@@ -451,7 +667,7 @@ defmodule CrissCross.InternalRedis do
                 {^ref, resp, signature} ->
                   {:cont, {:ok, [encode_redis_list([resp, signature]) | acc]}}
 
-                {ref, :queue_too_big} ->
+                {^ref, :queue_too_big} ->
                   {:halt, {:error, encode_redis_string("Queue too big")}}
               after
                 time_left ->
@@ -471,18 +687,151 @@ defmodule CrissCross.InternalRedis do
   end
 
   def handle(
-        ["JOBGET", tree, timeout_str],
-        %{make_store: make_store} = state
+        ["REMOTE", cluster, "1", "STREAMSTART", tree],
+        %{make_store: make_store, subscriptions: subscriptions, streams: streams} = state
+      ) do
+    ref = make_job_ref()
+    {:ok, peer_group} = PeerGroup.start_link(cluster, 1, tree)
+
+    try do
+      if PeerGroup.has_peer(peer_group, 5000) |> IO.inspect() do
+        case PeerGroup.get_conns(peer_group, 5_000) |> IO.inspect() do
+          [] ->
+            {encode_redis_error("No available connections"), state}
+
+          [{:quic, endpoint, conn, _} | _] ->
+            {:ok, pid} =
+              Task.Supervisor.start_child(CrissCross.TaskSupervisor, fn ->
+                subscribe_loop_send(nil, ref)
+              end)
+
+            case ExP2P.bidirectional_open(endpoint, conn, pid) do
+              {:ok, stream} ->
+                Cachex.put!(:waiting_streams, ref, {pid, ref})
+
+                {encode_redis_string(ref),
+                 %{
+                   state
+                   | streams:
+                       Map.put(streams, ref, {:remote_stream, cluster, endpoint, stream, tree})
+                 }}
+
+              {:error, error} ->
+                {encode_redis_error(error), state}
+            end
+        end
+      else
+        {encode_redis_error("No available peers"), state}
+      end
+    after
+      PeerGroup.stop(peer_group)
+    end
+  end
+
+  def handle(
+        ["STREAMSTART", tree],
+        %{make_store: make_store, streams: streams} = state
+      ) do
+    ref = make_job_ref()
+
+    {:ok, pid} =
+      Task.Supervisor.start_child(CrissCross.TaskSupervisor, fn ->
+        subscribe_loop_send_local(nil, ref)
+      end)
+
+    Cachex.put!(:waiting_streams, ref, {pid, ref})
+
+    {encode_redis_string(ref), %{state | streams: Map.put(streams, ref, {tree, pid})}}
+  end
+
+  def handle(
+        ["STREAMSTOP", ref],
+        %{make_store: make_store, streams: streams} = state
+      ) do
+    new_streams =
+      case Map.pop(streams, ref) do
+        {nil, _} ->
+          streams
+
+        {tree, s} when is_binary(tree) ->
+          s
+
+        {{:remote_stream, _cluster, endpoint, sender, _}, s} ->
+          ExP2P.stream_finish(endpoint, sender)
+          s
+      end
+
+    {redis_ok(), %{state | streams: new_streams}}
+  end
+
+  def handle(
+        ["STREAMSEND", ref, method, argument, timeout_str],
+        %{make_store: make_store, streams: streams} = state
       ) do
     case Integer.parse(timeout_str) do
       {timeout, _} when timeout > 0 ->
+        case Map.get(streams, ref) do
+          nil ->
+            {redis_ok(), state}
+
+          {tree, pid} when is_binary(tree) ->
+            :ok =
+              CrissCross.ProcessQueue.add_to_queue(
+                tree,
+                {tree <> method <> argument, method, argument, timeout, ref, pid}
+              )
+
+            {redis_ok(), state}
+
+          {:remote_stream, cluster, endpoint, sender, tree} ->
+            payload = serialize_bert([tree, method, argument, timeout, ref])
+            encrypted = encrypt_cluster_message(cluster, payload)
+            command = ["STREAM", cluster, encrypted]
+
+            case ExP2P.stream_send(endpoint, sender, serialize_bert(command), 10_000) do
+              :ok -> {redis_ok(), state}
+              {:error, error} -> {encode_redis_error(error), state}
+            end
+        end
+
+      _ ->
+        {encode_redis_error("Invalid timeout"), state}
+    end
+  end
+
+  def handle(
+        ["JOBGET", tree, timeout_str],
+        %{make_store: make_store, socket: socket} = state
+      ) do
+    case Integer.parse(timeout_str) do
+      {timeout, _} when timeout > 0 ->
+        outer = self()
+
         t =
           Task.async(fn ->
             CrissCross.ProcessQueue.get_next(tree)
 
             receive do
-              {:response, resp} ->
-                {:ok, resp}
+              {:queue_response, {query, method, arg_bin, timeout, ref, pid} = resp} ->
+                to_send =
+                  encode_redis_list_raw([
+                    encode_redis_string(method),
+                    encode_redis_string(arg_bin),
+                    encode_redis_string(ref)
+                  ])
+
+                Cachex.put!(:pids, ref, {pid, query}, ttl: timeout * 2)
+
+                res = :gen_tcp.send(socket, to_send)
+
+                case res do
+                  :ok ->
+                    :ok
+
+                  {:error, e} ->
+                    CrissCross.ProcessQueue.add_to_queue(tree, resp)
+                    :ok
+                end
             after
               timeout ->
                 {:error, :timeout}
@@ -490,14 +839,8 @@ defmodule CrissCross.InternalRedis do
           end)
 
         case Task.await(t, timeout + 100) do
-          {:ok, {query, method, arg_bin, timeout, ref, pid}} ->
-            Cachex.put!(:pids, ref, {pid, query}, ttl: timeout * 2)
-
-            {encode_redis_list_raw([
-               encode_redis_string(method),
-               encode_redis_string(arg_bin),
-               encode_redis_string(serialize_bert(ref))
-             ]), state}
+          :ok ->
+            {"", state}
 
           {:error, :timeout} ->
             {encode_redis_error("Timeout"), state}
@@ -513,37 +856,34 @@ defmodule CrissCross.InternalRedis do
   end
 
   def handle(
-        ["JOBRESPOND", ref, response, private_key_str],
+        ["JOBRESPOND", reference, response, private_key_str],
         %{make_store: make_store} = state
       ) do
-    case deserialize_bert(ref) do
-      reference ->
-        case DHTUtils.load_private_key(private_key_str) do
-          {:ok, private_key} ->
-            case Cachex.get!(:pids, reference) do
-              nil ->
-                :ok
+    case DHTUtils.load_private_key(private_key_str) do
+      {:ok, private_key} ->
+        case Cachex.get!(:pids, reference) do
+          nil ->
+            Logger.warning("Responded to a unknown job.")
+            :ok
 
-              {pid, query_bin} ->
-                {:ok, signature} = DHTUtils.sign(query_bin <> response, private_key)
+          {pid, query_bin} ->
+            {:ok, signature} = DHTUtils.sign(query_bin <> response, private_key)
 
-                try do
-                  send(pid, {reference, response, signature})
-                catch
-                  kind, reason ->
-                    formatted = Exception.format(kind, reason, __STACKTRACE__)
-                    Logger.error("Registry.dispatch/3 failed with #{formatted}")
-                end
+            IO.inspect({reference, pid})
+
+            try do
+              send(pid, {reference, response, signature})
+            catch
+              kind, reason ->
+                formatted = Exception.format(kind, reason, __STACKTRACE__)
+                Logger.error("Registry.dispatch/3 failed with #{formatted}")
             end
-
-            {redis_ok(), state}
-
-          _ ->
-            {encode_redis_error("Invalid private key"), state}
         end
 
+        {redis_ok(), state}
+
       _ ->
-        {encode_redis_error("Invalid response format"), state}
+        {encode_redis_error("Invalid private key"), state}
     end
   end
 
@@ -891,6 +1231,95 @@ defmodule CrissCross.InternalRedis do
 
       _ ->
         encode_redis_error("Invalid private key")
+    end
+  end
+
+  def handle_stateless(["TUNNELOPEN", cluster, name, local_port_str, host, port_str], _state) do
+    case Integer.parse(port_str) do
+      {port, _} when port >= 1 and port <= 65535 ->
+        case Integer.parse(local_port_str) do
+          {local_port, _} when local_port >= 1 and local_port <= 65535 ->
+            ret = CrissCross.VPNClient.start_listening(cluster, name, local_port, host, port)
+
+            case ret do
+              {:ok, _pid} -> redis_ok()
+              {:error, e} -> encode_redis_error("Tunnel error: #{e}")
+            end
+
+          _ ->
+            encode_redis_error("Invalid port")
+        end
+
+      _ ->
+        encode_redis_error("Invalid port")
+    end
+  end
+
+  def handle_stateless(["TUNNELCLOSE", port_str], _state) do
+    case Integer.parse(port_str) do
+      {port, _} when port >= 1 and port <= 65535 ->
+        CrissCross.VPNClient.shutdown_port(port)
+        redis_ok()
+
+      _ ->
+        encode_redis_error("Invalid port")
+    end
+  end
+
+  def handle_stateless(
+        ["TUNNELALLOW", token, cluster, private_key_str, host, port_str],
+        %{tunnel_token: tunnel_token} = state
+      ) do
+    if tunnel_token != "" and tunnel_token != nil do
+      if tunnel_token == token do
+        case DHTUtils.load_private_key(private_key_str) do
+          {:ok, key} ->
+            name = DHTUtils.name_from_private_rsa_key(key)
+
+            case Integer.parse(port_str) do
+              {port, _} when port >= 1 and port <= 65535 ->
+                ret = CrissCross.VPNConfig.allow_use(cluster, name, host, port, key)
+
+                case ret do
+                  :ok -> redis_ok()
+                  {:error, e} -> encode_redis_error("Tunnel error: #{e}")
+                end
+
+              _ ->
+                encode_redis_error("Invalid port")
+            end
+
+          _ ->
+            encode_redis_error("Invalid public key")
+        end
+      else
+        encode_redis_error("Token does not match configured ALLOW_TUNNEL_TOKEN")
+      end
+    else
+      encode_redis_error("Instance not configured to allow tunneling")
+    end
+  end
+
+  def handle_stateless(["TUNNELDISALLOW", cluster, public_key_str, host, port_str], _state) do
+    case DHTUtils.load_public_key(public_key_str) do
+      {:ok, key} ->
+        name = DHTUtils.name_from_public_key(key)
+
+        case Integer.parse(port_str) do
+          {port, _} when port >= 1 and port <= 65535 ->
+            ret = CrissCross.VPNConfig.disallow_use(cluster, name, host, port)
+
+            case ret do
+              :ok -> redis_ok()
+              {:error, e} -> encode_redis_error("Tunnel error: #{e}")
+            end
+
+          _ ->
+            encode_redis_error("Invalid port")
+        end
+
+      _ ->
+        encode_redis_error("Invalid public key")
     end
   end
 

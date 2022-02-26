@@ -7,6 +7,10 @@ defmodule CrissCross.Utils do
     defexception message: "could not find hash locally"
   end
 
+  defmodule MissingClusterError do
+    defexception message: "cluster not configured"
+  end
+
   defmodule MaxTransferExceeded do
     defexception message: "max size of transfer exceeded"
   end
@@ -78,8 +82,8 @@ defmodule CrissCross.Utils do
       %{cypher: cypher} ->
         decrypt(msg, cypher)
 
-      e ->
-        e
+      _e ->
+        raise MissingClusterError, cluster_id
     end
   end
 
@@ -88,8 +92,8 @@ defmodule CrissCross.Utils do
       %{cypher: cypher} ->
         encrypt(cypher, msg)
 
-      e ->
-        e
+      _e ->
+        raise MissingClusterError, cluster_id
     end
   end
 
@@ -118,5 +122,13 @@ defmodule CrissCross.Utils do
       _ ->
         ret
     end
+  end
+
+  @variant10 2
+  @uuid_v4 4
+
+  def make_job_ref() do
+    <<u0::48, _::4, u1::12, _::2, u2::62>> = :crypto.strong_rand_bytes(16)
+    <<u0::48, @uuid_v4::4, u1::12, @variant10::2, u2::62>>
   end
 end

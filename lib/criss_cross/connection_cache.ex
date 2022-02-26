@@ -2,7 +2,7 @@ defmodule CrissCross.ConnectionCache do
   @encrypt true
 
   import CrissCross.Utils
-  import CrissCrossDHT.Server.Utils, only: [encrypt: 2]
+  import CrissCrossDHT.Server.Utils, only: [encrypt: 2, tuple_to_ipstr: 2]
 
   use GenServer
 
@@ -10,6 +10,7 @@ defmodule CrissCross.ConnectionCache do
 
   @interval 60 * 1000
   @ping_timeout 3000
+  @pong_reply serialize_bert({:ok, "PONG"})
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
@@ -23,18 +24,27 @@ defmodule CrissCross.ConnectionCache do
     GenServer.cast(__MODULE__, {:return, conn})
   end
 
-  def command({:unencrypted, conn, _}, command, arg, timeout) do
-    Redix.command(conn, [command, arg], timeout: timeout)
-  end
+  def command({:quic, endpoint, conn, _}, command, cluster, payload, timeout) do
+    encrypted = encrypt_cluster_message(cluster, payload)
 
-  def command({:encrypted, conn, secret, _}, command, arg, timeout) do
-    payload = encrypt(secret, arg)
-    Redix.command(conn, [command, payload], timeout: timeout)
+    ret =
+      ExP2P.bidirectional(endpoint, conn, serialize_bert([command, cluster, encrypted]), timeout)
+
+    case ret do
+      {:ok, s} -> deserialize_bert(s)
+      e -> e
+    end
   end
 
   @impl true
   def init(:ok) do
-    {:ok, %{conns: %{}, timers: %{}}}
+    send(self(), :start)
+    {:ok, %{endpoint: nil, conns: %{}, timers: %{}}}
+  end
+
+  def handle_info(:start, state) do
+    {:ok, endpoint, _} = ExP2P.Dispatcher.endpoint(ExP2P.Dispatcher)
+    {:noreply, %{state | endpoint: endpoint}}
   end
 
   @impl true
@@ -47,12 +57,7 @@ defmodule CrissCross.ConnectionCache do
         {nil, new_conns} ->
           new_conns
 
-        {{:encrypted, conn, _, _}, new_conns} ->
-          Redix.stop(conn)
-          new_conns
-
-        {{:unencrypted, conn, _}, new_conns} ->
-          Redix.stop(conn)
+        {{:quic, _endpoint, _conn, _}, new_conns} ->
           new_conns
       end
 
@@ -70,45 +75,59 @@ defmodule CrissCross.ConnectionCache do
   end
 
   @impl true
-  def handle_call(
-        {:get_conn, {cluster, ip, port} = ip_port},
-        _,
+  def handle_info(
+        {:delete, ip_port},
         %{conns: conns, timers: timers} = state
       ) do
-    case conns do
-      %{^ip_port => conn} ->
-        case Redix.command(conn, ["PING"], timeout: @ping_timeout) do
-          {:ok, "PONG"} ->
-            case timers do
-              %{^ip_port => timer} -> Process.cancel_timer(timer)
-              _ -> :ok
-            end
+    {:noreply, %{state | conns: Map.delete(conns, ip_port), timers: Map.delete(timers, ip_port)}}
+  end
 
-            {:reply, {:ok, conn},
-             %{state | conns: Map.delete(conns, ip_port), timers: Map.delete(timers, ip_port)}}
+  @impl true
+  def handle_call(
+        {:get_conn, {cluster, ip, port} = ip_port},
+        reply_to,
+        %{endpoint: endpoint, conns: conns, timers: timers} = state
+      ) do
+    outer = self()
 
-          _ ->
-            case connect(cluster, ip, port) do
-              {:ok, conn} ->
-                {:reply, {:ok, conn},
-                 %{state | conns: Map.delete(conns, ip_port), timers: Map.delete(timers, ip_port)}}
+    Task.start(fn ->
+      case conns do
+        %{^ip_port => conn} ->
+          case ExP2P.bidirectional(endpoint, conn, serialize_bert(["PING"]), @ping_timeout) do
+            {:ok, @pong_reply} ->
+              case timers do
+                %{^ip_port => timer} -> Process.cancel_timer(timer)
+                _ -> :ok
+              end
 
-              e ->
-                Cachex.put!(:blacklisted_ips, {ip, port}, true)
-                {:reply, e, state}
-            end
-        end
+              send(outer, {:delete, ip_port})
+              GenServer.reply(reply_to, {:ok, conn})
 
-      _ ->
-        case connect(cluster, ip, port) do
-          {:ok, conn} ->
-            {:reply, {:ok, conn}, state}
+            _ ->
+              case connect(endpoint, cluster, ip, port) do
+                {:ok, conn} ->
+                  send(outer, {:delete, ip_port})
+                  GenServer.reply(reply_to, {:ok, conn})
 
-          e ->
-            Cachex.put!(:blacklisted_ips, {ip, port}, true)
-            {:reply, e, state}
-        end
-    end
+                e ->
+                  Cachex.put!(:blacklisted_ips, {ip, port}, true)
+                  GenServer.reply(reply_to, e)
+              end
+          end
+
+        _ ->
+          case connect(endpoint, cluster, ip, port) do
+            {:ok, conn} ->
+              GenServer.reply(reply_to, {:ok, conn})
+
+            e ->
+              Cachex.put!(:blacklisted_ips, {ip, port}, true)
+              GenServer.reply(reply_to, e)
+          end
+      end
+    end)
+
+    {:noreply, state}
   end
 
   @impl true
@@ -120,41 +139,16 @@ defmodule CrissCross.ConnectionCache do
     {:noreply, %{state | timers: new_timers, conns: new_conns}}
   end
 
-  def conn_ip_tuple({:encrypted, _, _, ip_tuple}), do: ip_tuple
-  def conn_ip_tuple({:unencrypted, _, ip_tuple}), do: ip_tuple
+  def conn_ip_tuple({:quic, _, _, ip_tuple}), do: ip_tuple
 
-  def connect(cluster, {a, b, c, d} = remote_ip, port) do
+  def connect(endpoint, cluster, remote_ip, port) do
     r =
-      case Redix.start_link(
-             host: "#{a}.#{b}.#{c}.#{d}",
-             port: port,
-             timeout: @ping_timeout
-           ) do
+      case ExP2P.connect(endpoint, [tuple_to_ipstr(remote_ip, port)], @ping_timeout) do
         {:ok, conn} ->
-          if @encrypt do
-            {public_key, private_key} = :crypto.generate_key(:ecdh, :x25519)
-
-            case Redix.command(conn, ["EXCHANGEKEY", public_key], timeout: @ping_timeout) do
-              {:ok, [other_public, token]} ->
-                secret = :crypto.compute_key(:ecdh, other_public, private_key, :x25519)
-                response = encrypt_cluster_message(cluster, token)
-                cluster_id_reponse = encrypt(secret, cluster)
-
-                case Redix.command(conn, ["VERIFY", cluster_id_reponse, response],
-                       timeout: @ping_timeout
-                     ) do
-                  {:ok, "OK"} ->
-                    {:commit, {:encrypted, conn, secret, {remote_ip, port}}}
-
-                  e ->
-                    {:ignore, e}
-                end
-
-              e ->
-                {:ignore, e}
-            end
-          else
-            {:commit, {:unencrypted, conn, {remote_ip, port}}}
+          case ExP2P.bidirectional(endpoint, conn, serialize_bert(["PING"]), @ping_timeout)
+               |> IO.inspect() do
+            {:ok, @pong_reply} -> {:commit, {:quic, endpoint, conn, {remote_ip, port}}}
+            e -> {:ignore, e}
           end
 
         e ->

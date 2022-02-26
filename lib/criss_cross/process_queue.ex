@@ -4,12 +4,14 @@ defmodule CrissCross.ProcessQueue do
   require Logger
 
   @max_queue_size 1000
+  @clean_timer 10_000
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
   end
 
   def init(path) do
+    Process.send_after(self(), :clean, @clean_timer)
     {:ok, %{waiting: %{}, queues: %{}}}
   end
 
@@ -47,6 +49,27 @@ defmodule CrissCross.ProcessQueue do
     end
   end
 
+  def clean_queues(q) do
+    case :queue.out(q) do
+      {{:value, {_query, _method, _argument, _timeout, _ref, waiting_pid}}, nq} ->
+        if Process.alive?(waiting_pid) do
+          q
+        else
+          clean_queues(nq)
+        end
+
+      {:empty, _} ->
+        q
+    end
+  end
+
+  def handle_info(:clean, %{queues: queues, waiting: waiting} = state) do
+    new_queues = Enum.map(queues, fn {k, q} -> {k, clean_queues(q)} end) |> Enum.into(%{})
+    new_waiting = Enum.map(waiting, fn {k, q} -> {k, clean_waiting(q)} end) |> Enum.into(%{})
+    Process.send_after(self(), :clean, @clean_timer)
+    {:noreply, %{state | waiting: new_waiting, queues: new_queues}}
+  end
+
   def handle_cast(
         {:get_next, location, pid},
         %{queues: queues, waiting: waiting} = state
@@ -56,7 +79,7 @@ defmodule CrissCross.ProcessQueue do
     case :queue.out(queue) do
       {{:value, {_query, _method, _argument, _timeout, _ref, waiting_pid} = v}, nq} ->
         if Process.alive?(waiting_pid) do
-          send(pid, {:response, v})
+          send(pid, {:queue_response, v})
 
           if :queue.is_empty(nq) do
             {:noreply,
@@ -91,7 +114,7 @@ defmodule CrissCross.ProcessQueue do
     case :queue.out(waiting) do
       {{:value, v}, nq} ->
         if Process.alive?(v) do
-          send(v, {:response, payload})
+          send(v, {:queue_response, payload})
 
           if :queue.is_empty(nq) do
             {:noreply,

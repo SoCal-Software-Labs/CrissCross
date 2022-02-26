@@ -1,24 +1,21 @@
-# CrissCross - Like if IPFS was also a Distributed Computing Network
+# CrissCross - Immutable Trees, RPC, Bidirectional Streams and TCP Tunneling using Private Distributed Hash Tables and QUIC
 
-CrissCross is a new way to share immutable structures and call remote procedures. Build a tree, get a hash and distribute it in your own private cluster. Build a service by generating a key and advertising on the cluster. Connect with any language that has a redis client. Store data in high speed databases.
+Use CrissCross to share immutable structures and find services to use. Users advertise hashes in a cluster on a distributed hash table for other users to find. Clusters are private and users cannot join your cluster without a secret key.
 
 ## Status
 
 This is alpha software. Expect bugs and API changes. Please make an issue for any discussion or proposals.
 
-# Why?
+# High Level
 
-IPFS was built for files and the Web. Its API is HTTP, its abstraction is files. This datamodel is not quite right for building applications and sharing state. It is painfully slow to access from other languages and it is complex to access the underlying DAG to get raw block access.
+CrissCross provides tools to manipulate, search and use the following over an encrypted peer-to-peer network:
 
-In applications you need to manipulate *data* not files. Trees of integers, lists, maps, strings and tuples. Thus CrissCross was born. CrissCross is like IPFS, you get immutable data from a hash via P2P. However with CrissCross you talk with the Redis Protocol for maximum performance as well as insert polymorphic data in a btree instead of uploading files.
+* Immutable syncable trees / files / directories / SQL engine
+* Remote Procedure Calls with bi-directional streaming
+* TCP tunneling
 
-CrissCross is built to query data on remote machines without downloading the whole tree. In addition, when a tree is updated, as long as you have the old data you only have to download the new nodes of the tree. This will make downloading terabyte sized trees easy.
 
-Another important consideration is that CrissCross is private. IPFS on the otherhand is a public network where everyone is on the same DHT. CrissCross consists of virtual clusters. There is one shared overlay network that bootstraps you into your cluster. Inside your cluster the data stays private and encrypted over the wire. You can even supply your own overlay cluster and bootstrap nodes for maximum privacy.
-
-CrissCross also exposes high-performance Remote Procedure Call services on the cluster. These services are protected by a private key and every response is signed. Unlike immutable trees, these services can provide real-time data feeds or perform actions. RPC services can be written in any language that has a redis client.
-
-# Features
+# Full Features
 
 * Content-Addressable Immutable Key Value Trees, SQL Engine and File System
 * Verified remote RPCs with load balancing without centralization
@@ -33,7 +30,7 @@ CrissCross also exposes high-performance Remote Procedure Call services on the c
 * Encryption per cluster
 * Efficiently iterate over large collections
 * Built in high performance embedded database
-* Rate limiting and connection bouncing
+
 
 
 ## Related Packages
@@ -42,6 +39,18 @@ CrissCross also exposes high-performance Remote Procedure Call services on the c
 * [SortedSetKV](https://github.com/SoCal-Software-Labs/SortedSetKV) High-Performance binding for the Sled Database
 * [ExSchnorr](https://github.com/hansonkd/ex_schnorr) Cryptographic Signatures
 * [CrissCrossPy](https://github.com/SoCal-Software-Labs/crisscross_py) Python client for CrissCross
+* [ExP2P](https://github.com/SoCal-Software-Labs/ExP2P) Elixir wrapper for qp2p
+
+## Further Reading
+
+* [Getting Started](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Getting-Started)
+* [Understanding TTLs](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Understanding-TTLs)
+* [Compaction](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Compaction)
+* [Using Redis](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Redis-Example)
+* [Redis API](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Redis-API)
+* [Using Python](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Python-Client)
+
+
 
 # Tour
 
@@ -218,6 +227,30 @@ print(resp)
 print(client.job_verify(service, "method", 42, result, signature, service))
 ```
 
+
+## TCP Tunneling
+
+On one instance  announce a tunnel under a private key pair and enable what hosts and ports you want to allow access.
+
+```python
+name = read_var("*../iron_cub/names/my_var.yaml#Name")
+cluster = read_var("*defaultcluster")
+writer = CrissCross(host=host, port=port, **kwargs)
+writer.job_announce(cluster, name)
+writer.tunnel_allow(token, cluster, name, "www.httpbin.org", 80)
+```
+
+On another instance map your local port (in this example: 7777) to the destination and port on any node advertising the key pair name on the cluster.
+
+```python
+name = read_var("*../iron_cub/names/my_var.yaml#Name")
+cluster = read_var("*defaultcluster")
+writer = CrissCross(host=host, port=port, **kwargs)
+writer.tunnel_open(cluster, name, 7777, "www.httpbin.org", 80)
+```
+
+Now you can access `localhost:7777` to reach `www.httpbin.org:80`
+
 ## SQL Engine
 
 From Python or Redis you can access the SQL engine to run complex SQL queries on immutable trees. Currently its rather limited (no ALTER TABLE staments and no INDEX support). Those things are supported by the engine ([GlueSQL](https://github.com/gluesql/gluesql)) however are not currently connected to the storage layer and need to be hooked up.
@@ -230,11 +263,3 @@ For small values, CrissCross can be about 10-500x faster than inserting and anno
 
 In the future there may be an option for a non-cryptographic CrissCross with embedded storage for maximum performance.
 
-# Further Reading
-
-* [Getting Started](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Getting-Started)
-* [Understanding TTLs](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Understanding-TTLs)
-* [Compaction](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Compaction)
-* [Using Redis](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Redis-Example)
-* [Redis API](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Redis-API)
-* [Using Python](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Python-Client)

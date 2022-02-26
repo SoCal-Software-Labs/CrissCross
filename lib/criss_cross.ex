@@ -341,8 +341,8 @@ defmodule CrissCross do
           :done ->
             send(task_pid, {task_ref, :done})
 
-          {ip, port} ->
-            n = %{ip: ip, port: port}
+          {ip, port, meta} ->
+            n = %{ip: ip, port: port, meta: meta}
 
             if not Enum.member?(skip_nodes, n) and
                  Cachex.get(:blacklisted_ips, {ip, port}) == {:ok, nil} do

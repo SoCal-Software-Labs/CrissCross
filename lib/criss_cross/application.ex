@@ -14,7 +14,7 @@ defmodule CrissCross.Application do
 
   @process_name CrissCrossDHT.Server.Worker
 
-  @default_udp 33333
+  @default_udp 22222
 
   def convert_ip(var, default) do
     ip_to_bind = System.get_env(var, default)
@@ -118,11 +118,11 @@ defmodule CrissCross.Application do
     bootstrap_overlay =
       System.get_env("BOOTSTRAP_CLUSTER", @cluster_name) |> Utils.decode_human!()
 
-    udp_port = System.get_env("EXTERNAL_UDP_PORT", "#{@default_udp}") |> String.to_integer()
-    external_tcp_port = System.get_env("EXTERNAL_TCP_PORT", "22222") |> String.to_integer()
+    external_port = System.get_env("EXTERNAL_PORT", "#{@default_udp}") |> String.to_integer()
     internal_tcp_port = System.get_env("INTERNAL_TCP_PORT", "11111") |> String.to_integer()
 
     auth = System.get_env("LOCAL_AUTH", "")
+    tunnel_token = System.get_env("ALLOW_TUNNEL_TOKEN")
 
     cluster_dir =
       System.get_env("CLUSTER_DIR", "./clusters") |> String.trim_trailing("?") |> Path.expand()
@@ -142,11 +142,10 @@ defmodule CrissCross.Application do
 
     dht_config = %{
       bootstrap_overlay: bootstrap_overlay,
-      port: udp_port,
-      ipv4: true,
+      port: external_port,
       ipv4_addr: external_ip,
-      ipv4_bind_addr: bind_ip,
-      ipv6: false,
+      dispatcher: ExP2P.Dispatcher,
+      bind_ip: bind_ip,
       cluster_dir: cluster_dir,
       name_dir: name_dir,
       bootstrap_nodes: bootstrap_nodes,
@@ -157,10 +156,39 @@ defmodule CrissCross.Application do
       end
     }
 
+    dispatcher_callback = fn endpoint, _connection, msg, sender, from, state ->
+      [l, r] = String.split(from, ":")
+      {:ok, addr} = :inet.parse_address(String.to_charlist(l))
+
+      if is_nil(sender) do
+        send(@process_name, {:udp, endpoint, addr, String.to_integer(r), msg})
+      else
+        CrissCross.CommandQueue.handle_new_message(msg, sender, from, endpoint, store, state)
+      end
+
+      :ok
+    end
+
     children = [
-      CrissCross.ConnectionCache,
       CrissCross.ProcessQueue,
+      {CrissCross.VPNConfig, [[]]},
+      {Registry, keys: :unique, name: CrissCross.VPNRegistry},
+      {Registry, keys: :unique, name: CrissCross.VPNClientRegistry},
+      {ExP2P.Dispatcher,
+       bind_addr: "#{ip_to_bind}:#{external_port}",
+       bootstrap_nodes: [],
+       connection_mod: ExP2P.Connection,
+       connection_mod_args: %{
+         new_state: &CrissCross.CommandQueue.new_state/1,
+         callback: dispatcher_callback
+       },
+       opts: [name: ExP2P.Dispatcher]},
+      CrissCross.ConnectionCache,
       {Registry, keys: :duplicate, name: CrissCross.ConnectionRegistry},
+      Supervisor.child_spec(
+        {Cachex, name: :local_jobs},
+        id: :local_jobs
+      ),
       Supervisor.child_spec(
         {Cachex, name: :pids, expiration: expiration(default: :timer.minutes(10))},
         id: :pids
@@ -170,8 +198,12 @@ defmodule CrissCross.Application do
         id: :tree_peers
       ),
       Supervisor.child_spec(
-        {Cachex, name: :blacklisted_ips, expiration: expiration(default: :timer.minutes(10))},
+        {Cachex, name: :blacklisted_ips, expiration: expiration(default: :timer.seconds(5))},
         id: :blacklisted_ips
+      ),
+      Supervisor.child_spec(
+        {Cachex, name: :waiting_streams, expiration: expiration(default: :timer.minutes(1))},
+        id: :waiting_streams
       ),
       Supervisor.child_spec(
         {Cachex,
@@ -179,32 +211,33 @@ defmodule CrissCross.Application do
         id: :node_cache
       ),
       {Task.Supervisor, name: CrissCross.TaskSupervisor},
-      Supervisor.child_spec(
-        {Task, fn -> CrissCross.ExternalRedis.accept(external_tcp_port, make_make_store) end},
-        restart: :permanent,
-        id: :external_redis
-      ),
+      # Supervisor.child_spec(
+      #   {Task, fn -> CrissCross.ExternalRedis.accept(external_tcp_port, make_make_store) end},
+      #   restart: :permanent,
+      #   id: :external_redis
+      # ),
       Supervisor.child_spec(
         {Task,
          fn ->
            CrissCross.InternalRedis.accept(
              internal_tcp_port,
-             external_tcp_port,
+             external_port,
              make_make_store,
              store,
-             auth
+             auth,
+             tunnel_token
            )
          end},
         restart: :permanent,
         id: :internal_redis
       ),
-      {CrissCross.ValueCloner, {make_make_store, external_tcp_port}},
+      {CrissCross.ValueCloner, {make_make_store, external_port}},
       {CrissCrossDHT.Supervisor, node_id: node_id, worker_name: @process_name, config: dht_config}
     ]
 
     Logger.info("Exposing IP #{ip}")
     Logger.info("Binding on #{ip_to_bind}")
-    Logger.info("UDP accepting connections on port #{udp_port}")
+
     ## Start the main supervisor
     opts = [strategy: :one_for_one, name: CrissCross.Supervisor]
     Supervisor.start_link(children, opts)

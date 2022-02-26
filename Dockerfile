@@ -23,14 +23,14 @@ COPY config config
 RUN . $HOME/.cargo/env && mix do deps.get, deps.compile
 
 # build project
+COPY rel rel
 COPY lib lib
 COPY native native
 RUN . $HOME/.cargo/env && mix do compile, release
 
 # prepare release image
-FROM debian:buster AS app
-RUN apt-get update
-RUN apt-get install -y libssl-dev locales && echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen
+FROM debian:buster-slim AS app
+RUN apt-get update && apt-get install -y libssl-dev locales && rm -rf /var/lib/apt/lists/* && echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen
 
 
 EXPOSE 11111
