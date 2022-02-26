@@ -1,6 +1,11 @@
 # CrissCross - Immutable Trees, RPC, Bidirectional Streams and TCP Tunneling using Private Distributed Hash Tables and QUIC
 
-Use CrissCross to share immutable structures and find services to use. Users advertise hashes in a cluster on a distributed hash table for other users to find. Clusters are private and users cannot join your cluster without a secret key.
+<p align="center">
+<img src="https://user-images.githubusercontent.com/496914/155846814-0afceff3-9197-47bf-ba00-6d47ff38b62e.jpeg">
+</p>
+
+
+CrissCross is an internet switchboard, letting you find data, services and other computers without a centralized service. Users advertise hashes in a cluster on a distributed hash table for other users to find. Clusters are private and users cannot join your cluster without a secret key. A configurable public layer is provided to bootstrap you into your cluster.
 
 ## Status
 
@@ -29,8 +34,8 @@ CrissCross provides tools to manipulate, search and use the following over an en
 * IPNS-like mutable pointers
 * Encryption per cluster
 * Efficiently iterate over large collections
-* Built in high performance embedded database
-
+* High performance embedded database
+* Automatically network configuration with UPnP
 
 
 ## Related Packages
@@ -158,9 +163,9 @@ $ crisscross get 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M "hello"
 
 ## Premptively Storing Data on a Cluster
 
-One thing CrissCross does differently than IPFS is preemptive distribution. If you have the PrivateKey, you can ask the cluster to store your tree. When you push a tree, you use the DHT to find 8 nodes and ask them to store the value. If they agree, they will connect to your node and download the tree and announce it as available for download, keeping it for the specified TTL.
+If you have the PrivateKey, you can ask the cluster to store your tree. When you push a tree, you use the DHT to find 8 nodes and ask them to store the value. If they agree, they will connect to your node and download the tree and announce it as available for download, keeping it for the specified TTL.
 
-To enable the feature, when distributing your cluster yaml file to peers, include `MaxAcceptedSize` and list the bytes of the Maximum download size you are willing to accept.
+To enable the feature, when distributing your cluster yaml file to peers, include `MaxAcceptedSize` and list the bytes of the maximum download size you are willing to distribute.
 
 ```yaml
 # clusters/my_cluster.yaml
@@ -193,8 +198,9 @@ You can disable this feature by destroying the PrivateKey after generating the c
 Generate a new keypair to announce the service under.
 
 ```bash
-crisscross keypair > names/my_key.yaml
+crisscross keypair > keys/my_key.yaml
 ```
+
 #### Server
 
 Get a job from the queue. Block until the timeout in ms or a job enters the queue. When you respond, CrissCross will automatically sign the response for you. You can serve multiple responses concurrently off of one connection by using threads or multithreaded queues. You can even serve results out of order. When you respond with the reference, CrissCross will automatically route the reply to the waiting client.
@@ -204,7 +210,7 @@ Get a job from the queue. Block until the timeout in ms or a job enters the queu
 import crisscross as cx
 
 client = cx.CrissCross()
-service = cx.read_var("*names/my_key.yaml#Name")
+service = cx.read_var("*keys/my_key.yaml#Name")
 cluster = cx.read_var("*defaultcluster")
 client.job_announce(cluster, service)
 while True:
@@ -220,36 +226,59 @@ Send a job to the server:
 
 ```python
 client = cx.CrissCross()
-service = cx.read_var("*names/my_key.yaml#Name")
+service = cx.read_var("*keys/my_key.yaml#Name")
 cluster = cx.read_var("*defaultcluster")
 result, signature = client.remote_job_do(cluster, service, "add_one", 42)
 print(resp)
 print(client.job_verify(service, "method", 42, result, signature, service))
 ```
 
+#### Streams
+
+For a job using bidirectional streams see the example: [streams.py](https://github.com/SoCal-Software-Labs/crisscross_py/blob/main/examples/streams.py)
 
 ## TCP Tunneling
 
-On one instance  announce a tunnel under a private key pair and enable what hosts and ports you want to allow access.
+TCP tunnelling allows you to connect to a remote service using another computer. This is useful if you are behind a firewall and need to share a local server or other resource. It also works well if you want to expose a server resource on the CrissCross network.
 
-```python
-name = read_var("*../iron_cub/names/my_var.yaml#Name")
-cluster = read_var("*defaultcluster")
-writer = CrissCross(host=host, port=port, **kwargs)
-writer.job_announce(cluster, name)
-writer.tunnel_allow(token, cluster, name, "www.httpbin.org", 80)
+#### How to tunnel
+
+Generate a new keypair to announce the tunnel under.
+
+```bash
+crisscross keypair > ./keys/my_tunnel.yaml
 ```
 
-On another instance map your local port (in this example: 7777) to the destination and port on any node advertising the key pair name on the cluster.
+On the server instance, set the environment variable `TUNNEL_TOKEN` of your CrissCross server to a secret value and restart your instance. Announce a tunnel under a private key pair and enable what hosts and ports you want to allow access using the `TUNNEL_TOKEN`
 
 ```python
-name = read_var("*../iron_cub/names/my_var.yaml#Name")
-cluster = read_var("*defaultcluster")
-writer = CrissCross(host=host, port=port, **kwargs)
-writer.tunnel_open(cluster, name, 7777, "www.httpbin.org", 80)
+import os
+import crisscross as cx
+
+
+token = os.getenv("TUNNEL_TOKEN")
+name = cx.read_var("*./keys/my_tunnel.yaml#Name")
+cluster = cx.read_var("*defaultcluster")
+client = cx.CrissCross()
+# Announce the service so they can find us
+client.job_announce(cluster, name)
+# Only allow access to www.httpbin.org
+client.tunnel_allow(token, cluster, name, "www.httpbin.org", 80)
 ```
 
-Now you can access `localhost:7777` to reach `www.httpbin.org:80`
+Take the `Name` value from `./keys/my_tunnel.yaml` and distribute it to the client. On the client instance, map your local port (in this example: 7777) to the destination and port on any node advertising the key pair name on the cluster.
+
+```python
+import crisscross as cx
+
+
+name = "" # Name from ./keys/my_tunnel.yaml
+cluster = cx.read_var("*defaultcluster")
+client = cx.CrissCross()
+client.tunnel_open(cluster, name, 7777, "www.httpbin.org", 80)
+```
+
+Now your client will automatically find the server and you can access `localhost:7777` on the client to reach `www.httpbin.org:80` from the server instance.
 
 ## SQL Engine
 
@@ -257,9 +286,54 @@ From Python or Redis you can access the SQL engine to run complex SQL queries on
 
 For more usage see the [Python client example](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Python-Client#sql)
 
+## Files
+
+Files are like any other tree, except they have integer keys and binary values. The keys represent the offset of the binary value in the original file. The python client and CLI provide a way to work with files:
+
+```bash
+$ crisscross upload Readme.md
+2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj
+```
+
+Once you have a hash, a file behaves like a normal tree, you can query its keys to get specific chunks of the file, announce it, download it, and distribute it.
+
+```bash
+# Show file contents:
+$ crisscross cat 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj
+# Download file:
+$ crisscross download 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj Readmecopy.md
+# Announce file
+$ crisscross announce *defaultcluster 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj
+# Download remote file
+$ crisscross download *defaultcluster 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj Readmecopy.md
+# Copy a remote file to your local CrissCross instance with multiple connections
+$ crisscross remote_persist --num=10 *defaultcluster 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj Readmecopy.md
+```
+
+#### Directories
+
+Directories work in the same way. Directories are trees with string keys and embedded trees as values. The python client and CLI provide methods for manipulating directories
+
+```bash
+$ crisscross upload_dir ./examples
+2UPqTuCGzngW5hR9BtuFaMdCJu2PJD1ygqfvbicFq3eenaq
+# Add a file to an existing directory
+$ crisscross upload_dir ./more-examples --tree=2UPqTuCGzngW5hR9BtuFaMdCJu2PJD1ygqfvbicFq3eenaq
+2UPmgchaP1Z2Yr2YUQtG1eMQqbNBt1qtEtK93RutWdvQDny
+```
+
+
+```bash
+$ crisscross download_dir 2UPqTuCGzngW5hR9BtuFaMdCJu2PJD1ygqfvbicFq3eenaq examples-copy
+# List a directories contents:
+$ crisscross ls 2UPqTuCGzngW5hR9BtuFaMdCJu2PJD1ygqfvbicFq3eenaq
+examples/streams.py
+examples/tcp_tunnel.py
+```
+
 # Speed
 
-For small values, CrissCross can be about 10-500x faster than inserting and announcing to IPFS over HTTP. For large values, the primary speed consideration (besides disk speed) is hashing. CrissCross uses Blake2, however switching to a non-cryptographic hash (like xxH3) increases the performance of inserting 10mb chunks by about 2-5x.
+CrissCross was built with performance in mind. For large values, the primary speed consideration (besides disk speed) is hashing. CrissCross uses Blake2, however switching to a non-cryptographic hash (like xxH3) increases the performance of inserting 10mb chunks by about 2-5x.
 
 In the future there may be an option for a non-cryptographic CrissCross with embedded storage for maximum performance.
 

@@ -122,12 +122,12 @@ defmodule CrissCross.Application do
     internal_tcp_port = System.get_env("INTERNAL_TCP_PORT", "11111") |> String.to_integer()
 
     auth = System.get_env("LOCAL_AUTH", "")
-    tunnel_token = System.get_env("ALLOW_TUNNEL_TOKEN")
+    tunnel_token = System.get_env("TUNNEL_TOKEN")
 
     cluster_dir =
       System.get_env("CLUSTER_DIR", "./clusters") |> String.trim_trailing("?") |> Path.expand()
 
-    name_dir = System.get_env("NAME_DIR", "./names") |> String.trim_trailing("?") |> Path.expand()
+    name_dir = System.get_env("KEY_DIR", "./keys") |> String.trim_trailing("?") |> Path.expand()
 
     {ip, external_ip} = convert_ip("EXTERNAL_IP", "127.0.0.1")
     {ip_to_bind, bind_ip} = convert_ip("BIND_IP", "127.0.0.1")

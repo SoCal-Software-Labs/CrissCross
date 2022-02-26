@@ -27,6 +27,8 @@ iron_cub-*.tar
 
 /names/
 
+/keys/
+
 /clusters/
 
 /__pycache__/

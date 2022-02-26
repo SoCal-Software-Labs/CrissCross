@@ -597,7 +597,8 @@ defmodule CrissCross.InternalRedis do
             :ok
           end,
           num,
-          external_port
+          external_port,
+          nil
         )
 
         redis_ok()
@@ -1293,7 +1294,7 @@ defmodule CrissCross.InternalRedis do
             encode_redis_error("Invalid public key")
         end
       else
-        encode_redis_error("Token does not match configured ALLOW_TUNNEL_TOKEN")
+        encode_redis_error("Token does not match configured TUNNEL_TOKEN")
       end
     else
       encode_redis_error("Instance not configured to allow tunneling")
