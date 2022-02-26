@@ -1,0 +1,26 @@
+on:
+  release:
+    types: [created]
+
+name: Upload to Dockerhub
+
+jobs:
+  deploy:
+    name: Publish
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+      
+    - name: Get release version
+      id: get_version
+      run: echo ::set-output name=RELEASE_VERSION::$(echo ${GITHUB_REF:10})
+      
+    - name: Publish to Registry
+      uses: elgohr/Publish-Docker-Github-Action@780fbae7f45909d95e3b9ed532045d29346735f5
+      with:
+        name: hansonkd/crisscross
+        username: ${{ secrets.DOCKER_HUB_USERNAME }}
+        password: ${{ secrets.DOCKER_HUB_SECRET }}
+        tags: "latest,${{ steps.get_version.outputs.RELEASE_VERSION }}"
