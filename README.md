@@ -5,7 +5,7 @@
 </p>
 
 
-CrissCross is an internet switchboard, letting you find data, services and other computers without a centralized service. Users advertise hashes in a cluster on a distributed hash table for other users to find. Clusters are private and users cannot join your cluster without a secret key. A configurable public layer is provided to bootstrap you into your cluster.
+CrissCross is an internet switchboard, letting you find data, services and other computers without a centralized service. Users advertise hashes in a cluster on a distributed hash table for other users to find. Clusters are private and users cannot join without a secret key. A configurable public layer is provided to bootstrap you into your cluster.
 
 ## Status
 
@@ -54,7 +54,7 @@ CrissCross provides tools to manipulate, search and use the following over an en
 * [Using Redis](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Redis-Example)
 * [Redis API](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Redis-API)
 * [Using Python](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Python-Client)
-
+* [Variable Substiution & DNS](https://github.com/SoCal-Software-Labs/CrissCross/wiki/Variable-substitution)
 
 
 # Tour
@@ -142,20 +142,20 @@ You can distribute this YAML file to anybody you wish to join the cluster. Be ca
 
 ## Clone and Share Trees
 
-Once you have a hash, you can share it on the network and others can clone it from you. `*defaultcluster` is a special string that is replaced with the name of the default bootstrap overlay cluster
+Once you have a hash, you can share it on the network and others can clone it from you. `^defaultcluster` is a special string that is replaced with the name of the default bootstrap overlay cluster
 
 ```bash
 # On one machine
-$ crisscross announce *defaultcluster 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
+$ crisscross announce ^defaultcluster 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
 True
 ```
 
 ```bash
 # On other machine query the tree without fully downloading it
-$ crisscross remote_get *defaultcluster 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M "hello2"
+$ crisscross remote_get ^defaultcluster 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M "hello2"
 "world2"
 # They can clone the tree to get a local copy
-$ crisscross remote_persist *defaultcluster 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
+$ crisscross remote_persist ^defaultcluster 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
 True
 $ crisscross get 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M "hello"
 "world"
@@ -211,7 +211,7 @@ import crisscross as cx
 
 client = cx.CrissCross()
 service = cx.read_var("*keys/my_key.yaml#Name")
-cluster = cx.read_var("*defaultcluster")
+cluster = cx.read_var("^defaultcluster")
 client.job_announce(cluster, service)
 while True:
     method, arg, ref = client.job_get(service, timeout=9999999)
@@ -227,7 +227,7 @@ Send a job to the server:
 ```python
 client = cx.CrissCross()
 service = cx.read_var("*keys/my_key.yaml#Name")
-cluster = cx.read_var("*defaultcluster")
+cluster = cx.read_var("^defaultcluster")
 result, signature = client.remote_job_do(cluster, service, "add_one", 42)
 print(resp)
 print(client.job_verify(service, "method", 42, result, signature, service))
@@ -249,7 +249,7 @@ Generate a new keypair to announce the tunnel under.
 crisscross keypair > ./keys/my_tunnel.yaml
 ```
 
-On the server instance, set the environment variable `TUNNEL_TOKEN` of your CrissCross server to a secret value and restart your instance. Announce a tunnel under a private key pair and enable what hosts and ports you want to allow access using the `TUNNEL_TOKEN`
+On the server instance, set the environment variable `TUNNEL_TOKEN` of your CrissCross server to a secret value and restart your instance. Announce a tunnel under a private key pair and enable what hosts and ports you want to allow access using the `TUNNEL_TOKEN`. A configurable passphrase (in this case `SECRETPASS`) makes sure only the clients allow can connect.
 
 ```python
 import os
@@ -258,12 +258,12 @@ import crisscross as cx
 
 token = os.getenv("TUNNEL_TOKEN")
 name = cx.read_var("*./keys/my_tunnel.yaml#Name")
-cluster = cx.read_var("*defaultcluster")
+cluster = cx.read_var("^defaultcluster")
 client = cx.CrissCross()
 # Announce the service so they can find us
 client.job_announce(cluster, name)
 # Only allow access to www.httpbin.org
-client.tunnel_allow(token, cluster, name, "www.httpbin.org", 80)
+client.tunnel_allow(token, cluster, name, "SECRETPASS", "www.httpbin.org", 80)
 ```
 
 Take the `Name` value from `./keys/my_tunnel.yaml` and distribute it to the client. On the client instance, map your local port (in this example: 7777) to the destination and port on any node advertising the key pair name on the cluster.
@@ -272,10 +272,10 @@ Take the `Name` value from `./keys/my_tunnel.yaml` and distribute it to the clie
 import crisscross as cx
 
 
-name = "" # Name from ./keys/my_tunnel.yaml
-cluster = cx.read_var("*defaultcluster")
+name = cx.read_var("") # Replace with name from ./keys/my_tunnel.yaml
+cluster = cx.read_var("^defaultcluster")
 client = cx.CrissCross()
-client.tunnel_open(cluster, name, 7777, "www.httpbin.org", 80)
+client.tunnel_open(cluster, name, "SECRETPASS", 7777, "www.httpbin.org", 80)
 ```
 
 Now your client will automatically find the server and you can access `localhost:7777` on the client to reach `www.httpbin.org:80` from the server instance.
@@ -303,16 +303,16 @@ $ crisscross cat 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj
 # Download file:
 $ crisscross download 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj Readmecopy.md
 # Announce file
-$ crisscross announce *defaultcluster 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj
+$ crisscross announce ^defaultcluster 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj
 # Download remote file
-$ crisscross download *defaultcluster 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj Readmecopy.md
+$ crisscross download ^defaultcluster 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj Readmecopy.md
 # Copy a remote file to your local CrissCross instance with multiple connections
-$ crisscross remote_persist --num=10 *defaultcluster 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj Readmecopy.md
+$ crisscross remote_persist --num=10 ^defaultcluster 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj Readmecopy.md
 ```
 
 #### Directories
 
-Directories work in the same way. Directories are trees with string keys and embedded trees as values. The python client and CLI provide methods for manipulating directories
+Directories work in the same way. Directories are trees with string keys and embedded trees as values. The python client and CLI provide methods for manipulating and accessing directories
 
 ```bash
 $ crisscross upload_dir ./examples
@@ -322,10 +322,9 @@ $ crisscross upload_dir ./more-examples --tree=2UPqTuCGzngW5hR9BtuFaMdCJu2PJD1yg
 2UPmgchaP1Z2Yr2YUQtG1eMQqbNBt1qtEtK93RutWdvQDny
 ```
 
-
 ```bash
 $ crisscross download_dir 2UPqTuCGzngW5hR9BtuFaMdCJu2PJD1ygqfvbicFq3eenaq examples-copy
-# List a directories contents:
+# List a directory's contents:
 $ crisscross ls 2UPqTuCGzngW5hR9BtuFaMdCJu2PJD1ygqfvbicFq3eenaq
 examples/streams.py
 examples/tcp_tunnel.py

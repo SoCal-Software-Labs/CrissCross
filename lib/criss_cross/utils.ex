@@ -11,6 +11,18 @@ defmodule CrissCross.Utils do
     defexception message: "cluster not configured"
   end
 
+  defmodule MissingVarError do
+    defexception message: "var is missing"
+  end
+
+  defmodule DNSResolutionError do
+    defexception message: "var is missing"
+  end
+
+  defmodule HTTPResolutionError do
+    defexception message: "http resource not resolved"
+  end
+
   defmodule MaxTransferExceeded do
     defexception message: "max size of transfer exceeded"
   end

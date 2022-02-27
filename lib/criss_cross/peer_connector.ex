@@ -82,8 +82,8 @@ defmodule CrissCross.PeerGroup do
     end)
 
     case Cachex.get!(:tree_peers, {cluster, tree_hash}) do
+      nil -> :ok
       peer -> send(task_pid, {:new_peer, peer})
-      _ -> :ok
     end
 
     state |> IO.inspect()

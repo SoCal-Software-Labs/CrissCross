@@ -10,18 +10,19 @@ defmodule CrissCross.VPNClient do
     end)
   end
 
-  def start_listening(cluster, tree, local_port, host, port) do
+  def start_listening(cluster, tree, public_token, local_port, host, port) do
     case Registry.lookup(CrissCross.VPNClientRegistry, local_port) do
       [] ->
+        IO.inspect({:auth, tree, public_token})
         {:ok, peer_group} = PeerGroup.start_link(cluster, 1, tree)
-        try_listen_peer_group(peer_group, cluster, tree, local_port, host, port)
+        try_listen_peer_group(peer_group, cluster, tree, public_token, local_port, host, port)
 
       [_ | _] ->
         {:error, "port taken"}
     end
   end
 
-  def try_listen_peer_group(peer_group, cluster, tree, local_port, host, port) do
+  def try_listen_peer_group(peer_group, cluster, tree, public_token, local_port, host, port) do
     try do
       if PeerGroup.has_peer(peer_group, 5000) do
         case PeerGroup.get_conns(peer_group, 5_000) do
@@ -41,7 +42,7 @@ defmodule CrissCross.VPNClient do
                       cluster,
                       encrypt_cluster_message(
                         cluster,
-                        serialize_bert({host, port, tree, challenge})
+                        serialize_bert({host, port, tree, public_token, challenge})
                       )
                     })
 
@@ -87,7 +88,7 @@ defmodule CrissCross.VPNClient do
                     {:ok, peer_group} = PeerGroup.start_link(cluster, 1, tree)
 
                     try do
-                      accept(peer_group, cluster, tree, local_port, host, port)
+                      accept(peer_group, cluster, tree, public_token, local_port, host, port)
                     after
                       PeerGroup.stop(peer_group)
                     end
@@ -95,7 +96,16 @@ defmodule CrissCross.VPNClient do
                 else
                   Logger.warning("Tunnel: Destination not supported by #{peer_addr}")
                   PeerGroup.bad_conn(peer_group, peer_conn)
-                  try_listen_peer_group(peer_group, cluster, tree, local_port, host, port)
+
+                  try_listen_peer_group(
+                    peer_group,
+                    cluster,
+                    tree,
+                    public_token,
+                    local_port,
+                    host,
+                    port
+                  )
                 end
 
               {:error, e} ->
@@ -112,15 +122,15 @@ defmodule CrissCross.VPNClient do
     end
   end
 
-  def accept(peer_group, cluster, tree, local_port, host, port) do
+  def accept(peer_group, cluster, tree, public_token, local_port, host, port) do
     {:ok, socket} = :gen_tcp.listen(local_port, [:binary, active: :once, reuseaddr: true])
     Logger.info("Tunneling TCP connections on port #{local_port} to #{host}:#{port}")
     Registry.register(CrissCross.VPNClientRegistry, local_port, socket)
 
-    loop_acceptor(peer_group, cluster, tree, local_port, host, port, socket)
+    loop_acceptor(peer_group, cluster, tree, public_token, local_port, host, port, socket)
   end
 
-  defp loop_acceptor(peer_group, cluster, tree, local_port, host, port, socket) do
+  defp loop_acceptor(peer_group, cluster, tree, public_token, local_port, host, port, socket) do
     case :gen_tcp.accept(socket) do
       {:ok, client} ->
         {:ok, pid} =
@@ -132,6 +142,7 @@ defmodule CrissCross.VPNClient do
               client,
               cluster,
               tree,
+              public_token,
               host,
               port,
               0
@@ -140,7 +151,7 @@ defmodule CrissCross.VPNClient do
 
         :ok = :gen_tcp.controlling_process(client, pid)
 
-        loop_acceptor(peer_group, cluster, tree, local_port, host, port, socket)
+        loop_acceptor(peer_group, cluster, tree, public_token, local_port, host, port, socket)
 
       {:error, _} ->
         Logger.info("Stopping TCP connections on port #{local_port}")
@@ -153,6 +164,7 @@ defmodule CrissCross.VPNClient do
         socket,
         cluster,
         tree,
+        public_token,
         host,
         port,
         attempt
@@ -165,7 +177,7 @@ defmodule CrissCross.VPNClient do
           if attempt < @max_attempts do
             PeerGroup.restart_search(peer_group)
             Process.sleep(1000 * attempt)
-            start_stream(peer_group, socket, cluster, tree, host, port, attempt + 1)
+            start_stream(peer_group, socket, cluster, tree, public_token, host, port, attempt + 1)
           end
 
         [{:quic, endpoint, conn, {ip, conn_port}} = peer_conn | _] ->
@@ -181,7 +193,7 @@ defmodule CrissCross.VPNClient do
                     cluster,
                     encrypt_cluster_message(
                       cluster,
-                      serialize_bert({host, port, tree, challenge})
+                      serialize_bert({host, port, tree, public_token, challenge})
                     )
                   })
 
@@ -193,7 +205,17 @@ defmodule CrissCross.VPNClient do
                     {:error, error} ->
                       Logger.error("Tunnel: #{peer_addr} #{error}")
                       PeerGroup.bad_conn(peer_group, peer_conn)
-                      start_stream(peer_group, socket, cluster, tree, host, port, attempt)
+
+                      start_stream(
+                        peer_group,
+                        socket,
+                        cluster,
+                        tree,
+                        public_token,
+                        host,
+                        port,
+                        attempt
+                      )
 
                     {:ref, ref, key_bytes, sig} ->
                       case DHTUtils.load_public_key(key_bytes) do
@@ -209,7 +231,17 @@ defmodule CrissCross.VPNClient do
                               )
 
                               PeerGroup.bad_conn(peer_group, peer_conn)
-                              start_stream(peer_group, socket, cluster, tree, host, port, attempt)
+
+                              start_stream(
+                                peer_group,
+                                socket,
+                                cluster,
+                                tree,
+                                public_token,
+                                host,
+                                port,
+                                attempt
+                              )
                             end
                           else
                             Logger.warning(
@@ -217,7 +249,17 @@ defmodule CrissCross.VPNClient do
                             )
 
                             PeerGroup.bad_conn(peer_group, peer_conn)
-                            start_stream(peer_group, socket, cluster, tree, host, port, attempt)
+
+                            start_stream(
+                              peer_group,
+                              socket,
+                              cluster,
+                              tree,
+                              public_token,
+                              host,
+                              port,
+                              attempt
+                            )
                           end
 
                         {:error, e} ->
@@ -226,7 +268,17 @@ defmodule CrissCross.VPNClient do
                           )
 
                           PeerGroup.bad_conn(peer_group, peer_conn)
-                          start_stream(peer_group, socket, cluster, tree, host, port, attempt)
+
+                          start_stream(
+                            peer_group,
+                            socket,
+                            cluster,
+                            tree,
+                            public_token,
+                            host,
+                            port,
+                            attempt
+                          )
                       end
                   end
 
@@ -237,7 +289,7 @@ defmodule CrissCross.VPNClient do
             {:error, error} ->
               Logger.error("Tunnel: #{peer_addr} #{error} | Attempting to reconnect.")
               PeerGroup.bad_conn(peer_group, peer_conn)
-              start_stream(peer_group, socket, cluster, tree, host, port, attempt)
+              start_stream(peer_group, socket, cluster, tree, public_token, host, port, attempt)
           end
       end
     else
@@ -246,7 +298,7 @@ defmodule CrissCross.VPNClient do
       if attempt < @max_attempts do
         PeerGroup.restart_search(peer_group)
         Process.sleep(1000 * attempt)
-        start_stream(peer_group, socket, cluster, tree, host, port, attempt + 1)
+        start_stream(peer_group, socket, cluster, tree, public_token, host, port, attempt + 1)
       end
     end
   end

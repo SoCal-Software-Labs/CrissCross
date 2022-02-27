@@ -31,12 +31,13 @@ defmodule CrissCross.Application do
   def bootstrap_nodes() do
     System.get_env(
       "BOOTSTRAP_NODES",
-      "udp://8thbnFn4HZ24vVojR5qV6jsLCoqMaeBAVSxioBLmzGzC@localhost:#{@default_udp}"
+      "quic://8thbnFn4HZ24vVojR5qV6jsLCoqMaeBAVSxioBLmzGzC@76.176.199.49:#{@default_udp}"
     )
     |> String.split(",")
+    |> Enum.filter(fn c -> c != "" end)
     |> Enum.map(fn c ->
       case URI.parse(c) do
-        %URI{scheme: "udp", port: port, host: host, userinfo: userinfo}
+        %URI{scheme: "quic", port: port, host: host, userinfo: userinfo}
         when is_binary(userinfo) ->
           %{node_id: userinfo, host: host, port: port || @default_udp}
 
@@ -111,6 +112,9 @@ defmodule CrissCross.Application do
   end
 
   def start(_type, _args) do
+    :inets.start()
+    :ssl.start()
+
     storage_backend = System.get_env("STORAGE_BACKEND", "sled://./data")
 
     CrissCrossDHT.Registry.start()
@@ -133,6 +137,13 @@ defmodule CrissCross.Application do
     {ip_to_bind, bind_ip} = convert_ip("BIND_IP", "127.0.0.1")
 
     bootstrap_nodes = bootstrap_nodes()
+
+    bootstrap_nodes_for_endpoint =
+      bootstrap_nodes
+      |> Enum.map(fn %{host: ip, port: port, node_id: node_id} -> {node_id, ip, port} end)
+      |> Utils.resolve_hostnames(:ipv4)
+      |> Enum.map(fn {_, host, port} -> Utils.tuple_to_ipstr(host, port) end)
+      |> IO.inspect()
 
     {storage, make_make_store} = get_backends(storage_backend)
 
@@ -176,7 +187,7 @@ defmodule CrissCross.Application do
       {Registry, keys: :unique, name: CrissCross.VPNClientRegistry},
       {ExP2P.Dispatcher,
        bind_addr: "#{ip_to_bind}:#{external_port}",
-       bootstrap_nodes: [],
+       bootstrap_nodes: bootstrap_nodes_for_endpoint,
        connection_mod: ExP2P.Connection,
        connection_mod_args: %{
          new_state: &CrissCross.CommandQueue.new_state/1,
@@ -188,6 +199,10 @@ defmodule CrissCross.Application do
       Supervisor.child_spec(
         {Cachex, name: :local_jobs},
         id: :local_jobs
+      ),
+      Supervisor.child_spec(
+        {Cachex, name: :cached_vars, expiration: expiration(default: :timer.seconds(5))},
+        id: :cached_vars
       ),
       Supervisor.child_spec(
         {Cachex, name: :pids, expiration: expiration(default: :timer.minutes(10))},

@@ -15,13 +15,14 @@ defmodule CrissCross.VPNConfig do
   end
 
   def get_vpn_key(cluster, name, host, port) do
-    IO.inspect({:get, cluster, name, host, port})
     Agent.get(__MODULE__, &Map.get(&1, {cluster, name, host, port}, nil))
   end
 
-  def allow_use(cluster, name, host, port, private_key) do
-    IO.inspect({:put, cluster, name, host, port})
-    Agent.update(__MODULE__, &Map.put(&1, {cluster, name, host, port}, private_key))
+  def allow_use(cluster, name, host, port, private_key, public_token) do
+    Agent.update(
+      __MODULE__,
+      &Map.put(&1, {cluster, name, host, port}, {public_token, private_key})
+    )
   end
 
   def disallow_use(cluster, name, host, port) do

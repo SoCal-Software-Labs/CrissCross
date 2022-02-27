@@ -2,7 +2,7 @@ defmodule CrissCross.InternalRedis do
   require Logger
 
   import CrissCross.Utils
-  alias CrissCross.Utils.{MissingHashError, DecoderError}
+  alias CrissCross.Utils.{MissingHashError, DecoderError, MissingVarError}
   alias CubDB.Store
   alias CrissCross.KVStore
   alias CrissCross.Scanner
@@ -79,7 +79,7 @@ defmodule CrissCross.InternalRedis do
     serve(socket, %{continuation: fun}, state)
   end
 
-  defp handle_parse(socket, {:ok, req, left_over}, state) do
+  defp handle_parse(socket, {:ok, req, left_over}, %{store: store} = state) do
     {resp, new_state} =
       case req do
         ["AUTH", _, _] ->
@@ -87,7 +87,7 @@ defmodule CrissCross.InternalRedis do
 
         _ ->
           try do
-            handle(req, state)
+            handle(Enum.map(req, fn r -> resolve(r, store) end), state)
           rescue
             MaxTransferExceeded ->
               {encode_redis_error("Maximum transfer size exceeded"), state}
@@ -97,6 +97,15 @@ defmodule CrissCross.InternalRedis do
 
             MissingClusterError ->
               {encode_redis_error("Cluster not configured"), state}
+
+            e in MissingVarError ->
+              {encode_redis_error("Variable #{e.message} not found"), state}
+
+            e in HTTPResolutionError ->
+              {encode_redis_error("Variable #{e.message} not resolve to a location"), state}
+
+            e in DNSResolutionError ->
+              {encode_redis_error("Variable #{e.message} not resolve to a location"), state}
 
             e in MissingHashError ->
               {encode_redis_error("Storage is missing value for hash #{e.message}"), state}
@@ -175,6 +184,89 @@ defmodule CrissCross.InternalRedis do
 
       [] ->
         {:error, "No available peers"}
+    end
+  end
+
+  def resolve("^" <> local_var, store) do
+    case KVStore.get(store, Enum.join(["vars", local_var], "-")) do
+      val when is_binary(val) ->
+        val
+
+      _ ->
+        raise MissingVarError, local_var
+    end
+  end
+
+  def resolve("dns://" <> dns_addr, _store) do
+    case :inet_res.getbyname(to_charlist("_crisscross." <> dns_addr), :txt) do
+      {:ok, {:hostent, _, _, :txt, _, [[v | _] | _]}} ->
+        case IO.iodata_to_binary(v) do
+          "data=" <> location ->
+            DHTUtils.decode_human!(location)
+
+          e ->
+            Logger.error("DNS TXT Location did not match format data= #{dns_addr}: #{inspect(e)}")
+
+            raise DNSResolutionError, dns_addr
+        end
+
+      {:ok, e} ->
+        Logger.error("DNS resolution error for #{dns_addr}: #{inspect(e)}")
+        raise DNSResolutionError, dns_addr
+
+      {:error, e} ->
+        Logger.error("DNS resolution error #{dns_addr}: #{inspect(e)}")
+        raise DNSResolutionError, dns_addr
+    end
+  end
+
+  def resolve("http://" <> addr, _store) do
+    resolve_or_cache("http://" <> addr)
+  end
+
+  def resolve("https://" <> addr, _store) do
+    resolve_or_cache("https://" <> addr)
+  end
+
+  def resolve(val, _store) do
+    val
+  end
+
+  def resolve_or_cache(full_addr) do
+    case Cachex.get!(:cached_vars, full_addr) do
+      nil ->
+        l = resolve_link(full_addr)
+        Cachex.put!(:cached_vars, full_addr, l)
+        l
+
+      v when is_binary(v) ->
+        v
+    end
+  end
+
+  def resolve_link(link) do
+    case :httpc.request(link) do
+      {:ok, {{_, 200, _}, _header, body}} ->
+        case YamlElixir.read_from_string(IO.iodata_to_binary(body)) do
+          {:ok, %{"data" => location}} ->
+            DHTUtils.decode_human!(location)
+
+          {:ok, e} ->
+            Logger.error("Excepted \"data\" key in YAML for variable #{link} got: #{inspect(e)}")
+
+            raise HTTPResolutionError, link
+
+          {:error, e} ->
+            Logger.error(
+              "Unexpected error unpacking YAML for variable #{link} got: #{inspect(e)}"
+            )
+
+            raise HTTPResolutionError, link
+        end
+
+      e ->
+        Logger.error("Unexpected error requesting YAML for variable #{link} got: #{inspect(e)}")
+        raise HTTPResolutionError, link
     end
   end
 
@@ -1235,12 +1327,25 @@ defmodule CrissCross.InternalRedis do
     end
   end
 
-  def handle_stateless(["TUNNELOPEN", cluster, name, local_port_str, host, port_str], _state) do
+  def handle_stateless(
+        ["TUNNELOPEN", cluster, name, public_token, local_port_str, host, port_str],
+        _state
+      ) do
     case Integer.parse(port_str) do
       {port, _} when port >= 1 and port <= 65535 ->
         case Integer.parse(local_port_str) do
           {local_port, _} when local_port >= 1 and local_port <= 65535 ->
-            ret = CrissCross.VPNClient.start_listening(cluster, name, local_port, host, port)
+            IO.inspect({:auth, public_token})
+
+            ret =
+              CrissCross.VPNClient.start_listening(
+                cluster,
+                name,
+                public_token,
+                local_port,
+                host,
+                port
+              )
 
             case ret do
               {:ok, _pid} -> redis_ok()
@@ -1268,7 +1373,7 @@ defmodule CrissCross.InternalRedis do
   end
 
   def handle_stateless(
-        ["TUNNELALLOW", token, cluster, private_key_str, host, port_str],
+        ["TUNNELALLOW", token, cluster, private_key_str, auth_token, host, port_str],
         %{tunnel_token: tunnel_token} = state
       ) do
     if tunnel_token != "" and tunnel_token != nil do
@@ -1279,7 +1384,7 @@ defmodule CrissCross.InternalRedis do
 
             case Integer.parse(port_str) do
               {port, _} when port >= 1 and port <= 65535 ->
-                ret = CrissCross.VPNConfig.allow_use(cluster, name, host, port, key)
+                ret = CrissCross.VPNConfig.allow_use(cluster, name, host, port, key, auth_token)
 
                 case ret do
                   :ok -> redis_ok()

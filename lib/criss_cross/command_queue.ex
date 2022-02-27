@@ -48,7 +48,7 @@ defmodule CrissCross.CommandQueue do
           case deserialize_bert(b) do
             {cluster, msg} ->
               case deserialize_bert(decrypt_cluster_message(cluster, msg)) do
-                {host, port, name, challenge} ->
+                {host, port, name, public_tunnel_token, challenge} ->
                   result = VPNConfig.get_vpn_key(cluster, name, host, port)
 
                   case result do
@@ -60,7 +60,7 @@ defmodule CrissCross.CommandQueue do
                         10_000
                       )
 
-                    private_key ->
+                    {^public_tunnel_token, private_key} ->
                       {:ok, signature} = DHTUtils.sign(challenge, private_key)
                       {:ok, pub_key} = ExSchnorr.public_from_private(private_key)
                       {:ok, encoded} = ExSchnorr.public_to_bytes(pub_key)
@@ -69,6 +69,16 @@ defmodule CrissCross.CommandQueue do
                         endpoint,
                         sender,
                         serialize_bert({true, encoded, signature}),
+                        10_000
+                      )
+
+                    _ ->
+                      Logger.warning("Tunnel: Connection refused because tokens did not match")
+
+                      ExP2P.stream_send(
+                        endpoint,
+                        sender,
+                        serialize_bert({false, nil, nil}),
                         10_000
                       )
                   end
@@ -87,7 +97,7 @@ defmodule CrissCross.CommandQueue do
           case deserialize_bert(b) do
             {cluster, msg} ->
               case deserialize_bert(decrypt_cluster_message(cluster, msg)) do
-                {host, port, name, challenge} ->
+                {host, port, name, public_tunnel_token, challenge} ->
                   case VPNConfig.get_vpn_key(cluster, name, host, port) do
                     nil ->
                       encrypted =
@@ -100,7 +110,7 @@ defmodule CrissCross.CommandQueue do
                       ExP2P.stream_send(endpoint, sender, encrypted, 10_000)
                       ExP2P.stream_finish(endpoint, sender)
 
-                    private_key ->
+                    {^public_tunnel_token, private_key} ->
                       {:ok, signature} = DHTUtils.sign(challenge, private_key)
                       {:ok, pub_key} = ExSchnorr.public_from_private(private_key)
                       {:ok, encoded} = ExSchnorr.public_to_bytes(pub_key)
@@ -127,6 +137,18 @@ defmodule CrissCross.CommandQueue do
                         )
 
                       :ok = :gen_tcp.controlling_process(socket, pid)
+
+                    _ ->
+                      Logger.warning("Tunnel: Connection refused because tokens did not match")
+
+                      encrypted =
+                        encrypt_cluster_message(
+                          cluster,
+                          serialize_bert({:error, "Invalid tunnel token"})
+                        )
+
+                      ExP2P.stream_send(endpoint, sender, encrypted, 10_000)
+                      ExP2P.stream_finish(endpoint, sender)
                   end
 
                 other ->
