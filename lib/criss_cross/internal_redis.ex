@@ -2,7 +2,15 @@ defmodule CrissCross.InternalRedis do
   require Logger
 
   import CrissCross.Utils
-  alias CrissCross.Utils.{MissingHashError, DecoderError, MissingVarError}
+
+  alias CrissCross.Utils.{
+    MissingHashError,
+    DecoderError,
+    HTTPResolutionError,
+    MissingVarError,
+    MulticodecError
+  }
+
   alias CubDB.Store
   alias CrissCross.KVStore
   alias CrissCross.Scanner
@@ -87,7 +95,13 @@ defmodule CrissCross.InternalRedis do
 
         _ ->
           try do
-            handle(Enum.map(req, fn r -> resolve(r, store) end), state)
+            case req do
+              ["R", command | args] ->
+                handle([command | Enum.map(args, fn r -> resolve(r, store) end)], state)
+
+              _ ->
+                handle(req, state)
+            end
           rescue
             MaxTransferExceeded ->
               {encode_redis_error("Maximum transfer size exceeded"), state}
@@ -100,6 +114,9 @@ defmodule CrissCross.InternalRedis do
 
             e in MissingVarError ->
               {encode_redis_error("Variable #{e.message} not found"), state}
+
+            MulticodecError ->
+              {encode_redis_error("Error resolving multicodec"), state}
 
             e in HTTPResolutionError ->
               {encode_redis_error("Variable #{e.message} not resolve to a location"), state}
@@ -187,7 +204,45 @@ defmodule CrissCross.InternalRedis do
     end
   end
 
-  def resolve("^" <> local_var, store) do
+  def codec_decode(<<0x00>> <> raw) do
+    {:ok, {raw, :identity}}
+  end
+
+  def codec_decode("U" <> raw) do
+    {:ok, {raw, :raw}}
+  end
+
+  def codec_decode(<<187, 3>> <> raw) do
+    {:ok, {raw, :https}}
+  end
+
+  def codec_decode(<<224, 3>> <> raw) do
+    {:ok, {raw, :http}}
+  end
+
+  def codec_decode("8" <> raw) do
+    {:ok, {raw, :dnsaddr}}
+  end
+
+  def codec_decode(<<v::binary-size(1), _::binary>>) do
+    {:error, "Unsupported codec #{inspect(v)}"}
+  end
+
+  def resolve(var, store) do
+    case codec_decode(var) do
+      {:ok, {val, type}} ->
+        resolve(type, val, store)
+
+      {:error, e} ->
+        raise MulticodecError, inspect(e)
+    end
+  end
+
+  def resolve(:identity, "defaultcluster", _store) do
+    CrissCrossDHT.ClusterWatcher.default_cluster()
+  end
+
+  def resolve(:identity, local_var, store) do
     case KVStore.get(store, Enum.join(["vars", local_var], "-")) do
       val when is_binary(val) ->
         val
@@ -197,7 +252,11 @@ defmodule CrissCross.InternalRedis do
     end
   end
 
-  def resolve("dns://" <> dns_addr, _store) do
+  def resolve(:raw, val, _store) do
+    val
+  end
+
+  def resolve(:dnsaddr, dns_addr, _store) do
     case :inet_res.getbyname(to_charlist("_crisscross." <> dns_addr), :txt) do
       {:ok, {:hostent, _, _, :txt, _, [[v | _] | _]}} ->
         case IO.iodata_to_binary(v) do
@@ -220,15 +279,15 @@ defmodule CrissCross.InternalRedis do
     end
   end
 
-  def resolve("http://" <> addr, _store) do
-    resolve_or_cache("http://" <> addr)
+  def resolve(:http, addr, _store) do
+    resolve_or_cache(addr)
   end
 
-  def resolve("https://" <> addr, _store) do
-    resolve_or_cache("https://" <> addr)
+  def resolve(:https, addr, _store) do
+    resolve_or_cache(addr)
   end
 
-  def resolve(val, _store) do
+  def resolve(:multihash, val, _store) do
     val
   end
 
@@ -664,6 +723,14 @@ defmodule CrissCross.InternalRedis do
       {:error, e} ->
         {encode_redis_error("error #{inspect(e)}"), state}
     end
+  end
+
+  def handle_stateless(["PING"], _state) do
+    encode_redis_string("PONG")
+  end
+
+  def handle_stateless(["ECHO", val], _state) do
+    encode_redis_string(val)
   end
 
   def handle_stateless(["JOBLOCAL", name, ttl], _state) do

@@ -143,7 +143,6 @@ defmodule CrissCross.Application do
       |> Enum.map(fn %{host: ip, port: port, node_id: node_id} -> {node_id, ip, port} end)
       |> Utils.resolve_hostnames(:ipv4)
       |> Enum.map(fn {_, host, port} -> Utils.tuple_to_ipstr(host, port) end)
-      |> IO.inspect()
 
     {storage, make_make_store} = get_backends(storage_backend)
 

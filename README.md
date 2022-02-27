@@ -28,14 +28,15 @@ CrissCross provides tools to manipulate, search and use the following over an en
 * Store polymorphic data like lists, integers, dictionaries and tuples
 * Broadcast data to the network preemptively - Collaborative caching
 * Configurable Maximum TTL for each cluster - Store data for as long as you need
-* Simple clear protocol - Access from any language that has a Redis client
-* Fast downloads with multiple connections
+* Fast simple protocol - Access from any language that has a Redis client
+* Speedy downloads with multiple connections
 * Remotely access trees on other peoples machines to clone or query
 * IPNS-like mutable pointers
 * Encryption per cluster
 * Efficiently iterate over large collections
 * High performance embedded database
-* Automatically network configuration with UPnP
+* Automatic network configuration with UPnP
+* Redis pubsub job queues and bidirectional streams
 
 
 ## Related Packages

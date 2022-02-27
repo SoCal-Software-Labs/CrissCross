@@ -37,10 +37,6 @@ echo "Killing old container..."
 $COMMAND container stop crisscross 2> /dev/null
 $COMMAND container rm crisscross 2> /dev/null
 
-# if [[ "$(docker images -q $CRISSCROSS_IMAGE 2> /dev/null)" == "" ]]; then
-#   $COMMAND pull $CRISSCROSS_IMAGE
-# fi
-
 
 ($COMMAND run \
     --rm \
@@ -55,7 +51,7 @@ $COMMAND container rm crisscross 2> /dev/null
     -e "EXTERNAL_IP=$EXTERNAL_IP" \
     -e "STORAGE_BACKEND=$STORAGE_BACKEND" \
     -e "LOCAL_AUTH=$LOCAL_AUTH" \
-    --name crisscross \
+    --name hansonkd/crisscross \
     -p $INTERNAL_TCP_PORT:$INTERNAL_TCP_PORT \
     -p "$EXTERNAL_PORT:$EXTERNAL_PORT/UDP" \
     crisscross 2>&1 | sed -e 's/^\(.*\)$/'"$GREEN"'[CrissCross] \1'"$NONE"'/'

@@ -27,6 +27,10 @@ defmodule CrissCross.Utils do
     defexception message: "max size of transfer exceeded"
   end
 
+  defmodule MulticodecError do
+    defexception message: "invalid multicodec"
+  end
+
   @crlf_iodata [?\r, ?\n]
 
   import CrissCrossDHT.Server.Utils, only: [encrypt: 2, decrypt: 2]
