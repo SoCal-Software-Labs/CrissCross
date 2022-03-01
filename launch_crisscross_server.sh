@@ -47,8 +47,7 @@ $COMMAND container rm crisscross 2> /dev/null
     -v $CLUSTER_DIR:/app/clusters \
     -v $KEY_DIR:/app/keys \
     -e "INTERNAL_TCP_PORT=$INTERNAL_TCP_PORT" \
-    -e "EXTERNAL_TCP_PORT=$EXTERNAL_TCP_PORT" \
-    -e "EXTERNAL_UDP_PORT=$EXTERNAL_UDP_PORT" \
+    -e "BIND_IP=0.0.0.0" \
     -e "EXTERNAL_IP=$EXTERNAL_IP" \
     -e "STORAGE_BACKEND=$STORAGE_BACKEND" \
     -e "LOCAL_AUTH=$LOCAL_AUTH" \

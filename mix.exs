@@ -34,12 +34,11 @@ defmodule CrissCross.MixProject do
       {:ex_p2p, "~> 0.1.0"},
       {:criss_cross_dht,
        github: "SoCal-Software-Labs/CrissCrossDHT",
-       ref: "d4f0bbb368a1afd258d260956a61c983eb1781b2"},
+       ref: "7995ecc679d38d18aed9068344e43c9501606939"},
       # {:criss_cross_dht, path: "../MlDHT"},
       {:rustler, "~> 0.23.0"},
       {:yaml_elixir, "~> 2.8"},
       {:sorted_set_kv, "~> 0.1.2"},
-      {:file_system, "~> 0.2.10"},
       {:hammer, "~> 6.0"}
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
