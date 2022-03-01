@@ -25,7 +25,6 @@ defmodule CrissCross.MixProject do
       {:cubdb, github: "SoCal-Software-Labs/cubdb"},
       {:jason, "~> 1.3.0"},
       {:redix, github: "SoCal-Software-Labs/safe-redix"},
-      {:xandra, "~> 0.11"},
       {:benchee, "~> 1.0", only: :dev},
       {:b58, "~> 1.0.2"},
       {:cachex, "~> 3.4.0"},

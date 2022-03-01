@@ -40,6 +40,7 @@ ENV MIX_ENV=prod
 
 # prepare app directory
 RUN mkdir /app
+RUN mkdir /app/tmp
 WORKDIR /app
 RUN /bin/sh -c "groupadd -r crisscross && useradd -r -g crisscross crisscross"
 RUN /bin/sh -c "mkdir /data && chown crisscross:crisscross /data"

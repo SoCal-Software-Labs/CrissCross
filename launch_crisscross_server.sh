@@ -21,7 +21,7 @@ fi
 
 echo "$STORAGE_BACKEND"
 
-IMAGE=hansonkd/crisscross:v0.0.3
+IMAGE=hansonkd/crisscross:v0.0.3b
 CRISSCROSS_IMAGE="${CRISSCROSS_IMAGE:-crisscross}"
 INTERNAL_TCP_PORT="${INTERNAL_TCP_PORT:-11111}"
 EXTERNAL_PORT="${EXTERNAL_PORT:-22222}"
