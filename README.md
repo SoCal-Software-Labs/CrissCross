@@ -1,11 +1,12 @@
-# CrissCross - Immutable Trees, RPC, Bidirectional Streams and TCP Tunneling using Private Distributed Hash Tables and QUIC
+# CrissCross - Immutable Trees, Bidirectional Streams and TCP Tunneling using Private Clusters, Redis Clients and QUIC
+
 
 <p align="center">
 <img src="https://user-images.githubusercontent.com/496914/155846814-0afceff3-9197-47bf-ba00-6d47ff38b62e.jpeg">
 </p>
 
 
-CrissCross is an internet switchboard, letting you find data, services and other computers without a centralized service. Users advertise hashes in a cluster on a distributed hash table for other users to find. Clusters are private and users cannot join without a secret key. A configurable public layer is provided to bootstrap you into your cluster.
+CrissCross is an internet switchboard, letting you find data, services and other computers without a centralized service. Users advertise hashes on a cluster's distributed hash table for other users to find. Clusters are private and users cannot join without a secret key. A configurable public layer is provided for bootstrapping.
 
 ## Status
 
@@ -19,16 +20,22 @@ CrissCross provides tools to manipulate, search and use the following over an en
 * Remote Procedure Calls with bi-directional streaming
 * TCP tunneling
 
+CrissCross was designed to build applications. As such it uses the Redis Protocol instead of HTTP, although HTTP gateways are planned. The core is built in Elixir with certain Rust bindings.
+
+<p align="center">
+    <img src="https://raw.githubusercontent.com/rust-lang/rust-artwork/master/logo/rust-logo-128x128.png">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+    <img src="https://user-images.githubusercontent.com/496914/155905566-32bacea8-aa59-4f65-8620-14d3e657f8d7.png" style="margin-left: 20px">
+</p>
 
 # Full Features
 
 * Content-Addressable Immutable Key Value Trees, SQL Engine and File System
+* Use a Redis client to connect from any language
 * Verified remote RPCs with load balancing without centralization
 * Private Clusters - Setup a cluster of nodes to securely share trees and services between them
 * Store polymorphic data like lists, integers, dictionaries and tuples
 * Broadcast data to the network preemptively - Collaborative caching
 * Configurable Maximum TTL for each cluster - Store data for as long as you need
-* Fast simple protocol - Access from any language that has a Redis client
 * Speedy downloads with multiple connections
 * Remotely access trees on other peoples machines to clone or query
 * IPNS-like mutable pointers

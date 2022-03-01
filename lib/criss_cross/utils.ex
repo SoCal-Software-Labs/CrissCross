@@ -36,6 +36,7 @@ defmodule CrissCross.Utils do
   import CrissCrossDHT.Server.Utils, only: [encrypt: 2, decrypt: 2]
 
   defdelegate hash(h), to: CrissCrossDHT.Server.Utils, as: :hash
+  defdelegate hash(h, max_size), to: CrissCrossDHT.Server.Utils, as: :hash
 
   defdelegate encode_human(item), to: CrissCrossDHT.Server.Utils, as: :encode_human
   defdelegate decode_human!(item), to: CrissCrossDHT.Server.Utils, as: :decode_human!
@@ -113,7 +114,7 @@ defmodule CrissCross.Utils do
     end
   end
 
-  def cluster_max_transfer_size(cluster_id, msg) do
+  def cluster_max_transfer_size(cluster_id) do
     case get_cluster_secret(cluster_id) do
       %{max_transfer: max_transfer} ->
         max_transfer

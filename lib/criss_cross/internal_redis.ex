@@ -7,6 +7,7 @@ defmodule CrissCross.InternalRedis do
     MissingHashError,
     DecoderError,
     HTTPResolutionError,
+    DNSResolutionError,
     MissingVarError,
     MulticodecError
   }
@@ -119,10 +120,10 @@ defmodule CrissCross.InternalRedis do
               {encode_redis_error("Error resolving multicodec"), state}
 
             e in HTTPResolutionError ->
-              {encode_redis_error("Variable #{e.message} not resolve to a location"), state}
+              {encode_redis_error("Variable #{e.message} did not resolve to a location"), state}
 
             e in DNSResolutionError ->
-              {encode_redis_error("Variable #{e.message} not resolve to a location"), state}
+              {encode_redis_error("Variable #{e.message} did not resolve to a location"), state}
 
             e in MissingHashError ->
               {encode_redis_error("Storage is missing value for hash #{e.message}"), state}
@@ -449,7 +450,7 @@ defmodule CrissCross.InternalRedis do
           :ok ->
             subscribe_loop(tree, socket, stop_ref)
 
-          {:error, e} ->
+          {:error, _e} ->
             CrissCross.ProcessQueue.add_to_queue(tree, resp)
             :ok
         end
@@ -558,7 +559,7 @@ defmodule CrissCross.InternalRedis do
           subscribe_loop(tree, socket, stop_ref)
         end)
 
-      res = :gen_tcp.send(socket, encode_redis_list(["subscribe", tree, 1]))
+      :gen_tcp.send(socket, encode_redis_list(["subscribe", tree, 1]))
 
       {"", %{state | subscriptions: Map.put(subscriptions, tree, {pid, stop_ref})}}
     end
@@ -725,6 +726,305 @@ defmodule CrissCross.InternalRedis do
     end
   end
 
+  def handle(
+        ["REMOTE", cluster, num_remotes, "JOBDO", tree, timeout_str, method, argument | rest],
+        state
+      )
+      when rem(length(rest), 2) == 0 do
+    case Integer.parse(num_remotes) do
+      {num, _} when num > 0 ->
+        case Integer.parse(timeout_str) do
+          {timeout, _} when timeout > 0 ->
+            commands =
+              [method, argument | rest]
+              |> Enum.chunk_every(2)
+              |> Enum.map(fn [k, v] ->
+                {k, v}
+              end)
+
+            do_remote_job(cluster, num, tree, commands, state, timeout)
+
+          _ ->
+            {encode_redis_error("Invalid timeout"), state}
+        end
+
+      _ ->
+        {encode_redis_error("Invalid number of peers"), state}
+    end
+  end
+
+  def handle(
+        ["JOBDO", tree, timeout_str, method, argument | rest],
+        state
+      )
+      when rem(length(rest), 2) == 0 do
+    case Integer.parse(timeout_str) do
+      {timeout, _} when timeout > 0 ->
+        t =
+          Task.async(fn ->
+            refs =
+              [method, argument | rest]
+              |> Enum.chunk_every(2)
+              |> Enum.map(fn [k, v] ->
+                ref = make_job_ref()
+
+                :ok =
+                  CrissCross.ProcessQueue.add_to_queue(
+                    tree,
+                    {tree <> k <> v, k, v, timeout, ref, self()}
+                  )
+
+                ref
+              end)
+
+            now = :os.system_time(:millisecond)
+
+            Enum.reduce_while(refs, {:ok, []}, fn ref, {:ok, acc} ->
+              time_left = timeout - (:os.system_time(:millisecond) - now)
+
+              receive do
+                {^ref, resp, signature} ->
+                  {:cont, {:ok, [encode_redis_list([resp, signature]) | acc]}}
+
+                {^ref, :queue_too_big} ->
+                  {:halt, {:error, encode_redis_string("Queue too big")}}
+              after
+                time_left ->
+                  {:halt, {:error, encode_redis_string("Timeout")}}
+              end
+            end)
+          end)
+
+        case Task.await(t, timeout + 100) do
+          {:ok, to_send} -> {encode_redis_list_raw(to_send), state}
+          {:error, to_send} -> {to_send, state}
+        end
+
+      _ ->
+        {encode_redis_error("Invalid timeout"), state}
+    end
+  end
+
+  def handle(
+        ["REMOTE", cluster, "1", "STREAMSTART", tree],
+        %{streams: streams} = state
+      ) do
+    ref = make_job_ref()
+    {:ok, peer_group} = PeerGroup.start_link(cluster, 1, tree)
+
+    try do
+      if PeerGroup.has_peer(peer_group, 5000) do
+        case PeerGroup.get_conns(peer_group, 5_000) do
+          [] ->
+            {encode_redis_error("No available connections"), state}
+
+          [{:quic, endpoint, conn, _} | _] ->
+            {:ok, pid} =
+              Task.Supervisor.start_child(CrissCross.TaskSupervisor, fn ->
+                subscribe_loop_send(nil, ref)
+              end)
+
+            case ExP2P.bidirectional_open(endpoint, conn, pid) do
+              {:ok, stream} ->
+                Cachex.put!(:waiting_streams, ref, {pid, ref})
+
+                {encode_redis_string(ref),
+                 %{
+                   state
+                   | streams:
+                       Map.put(streams, ref, {:remote_stream, cluster, endpoint, stream, tree})
+                 }}
+
+              {:error, error} ->
+                {encode_redis_error(error), state}
+            end
+        end
+      else
+        {encode_redis_error("No available peers"), state}
+      end
+    after
+      PeerGroup.stop(peer_group)
+    end
+  end
+
+  def handle(
+        ["STREAMSTART", tree],
+        %{streams: streams} = state
+      ) do
+    ref = make_job_ref()
+
+    {:ok, pid} =
+      Task.Supervisor.start_child(CrissCross.TaskSupervisor, fn ->
+        subscribe_loop_send_local(nil, ref)
+      end)
+
+    Cachex.put!(:waiting_streams, ref, {pid, ref})
+
+    {encode_redis_string(ref), %{state | streams: Map.put(streams, ref, {tree, pid})}}
+  end
+
+  def handle(
+        ["STREAMSTOP", ref],
+        %{streams: streams} = state
+      ) do
+    new_streams =
+      case Map.pop(streams, ref) do
+        {nil, _} ->
+          streams
+
+        {tree, s} when is_binary(tree) ->
+          s
+
+        {{:remote_stream, _cluster, endpoint, sender, _}, s} ->
+          ExP2P.stream_finish(endpoint, sender)
+          s
+      end
+
+    {redis_ok(), %{state | streams: new_streams}}
+  end
+
+  def handle(
+        ["STREAMSEND", ref, method, argument, timeout_str],
+        %{streams: streams} = state
+      ) do
+    case Integer.parse(timeout_str) do
+      {timeout, _} when timeout > 0 ->
+        case Map.get(streams, ref) do
+          nil ->
+            {redis_ok(), state}
+
+          {tree, pid} when is_binary(tree) ->
+            :ok =
+              CrissCross.ProcessQueue.add_to_queue(
+                tree,
+                {tree <> method <> argument, method, argument, timeout, ref, pid}
+              )
+
+            {redis_ok(), state}
+
+          {:remote_stream, cluster, endpoint, sender, tree} ->
+            payload = serialize_bert([tree, method, argument, timeout, ref])
+            encrypted = encrypt_cluster_message(cluster, payload)
+            command = ["STREAM", cluster, encrypted]
+
+            case ExP2P.stream_send(endpoint, sender, serialize_bert(command), 10_000) do
+              :ok -> {redis_ok(), state}
+              {:error, error} -> {encode_redis_error(error), state}
+            end
+        end
+
+      _ ->
+        {encode_redis_error("Invalid timeout"), state}
+    end
+  end
+
+  def handle(
+        ["JOBGET", tree, timeout_str],
+        %{socket: socket} = state
+      ) do
+    case Integer.parse(timeout_str) do
+      {timeout, _} when timeout > 0 ->
+        t =
+          Task.async(fn ->
+            CrissCross.ProcessQueue.get_next(tree)
+
+            receive do
+              {:queue_response, {query, method, arg_bin, timeout, ref, pid} = resp} ->
+                to_send =
+                  encode_redis_list_raw([
+                    encode_redis_string(method),
+                    encode_redis_string(arg_bin),
+                    encode_redis_string(ref)
+                  ])
+
+                Cachex.put!(:pids, ref, {pid, query}, ttl: timeout * 2)
+
+                res = :gen_tcp.send(socket, to_send)
+
+                case res do
+                  :ok ->
+                    :ok
+
+                  {:error, _e} ->
+                    CrissCross.ProcessQueue.add_to_queue(tree, resp)
+                    :ok
+                end
+            after
+              timeout ->
+                {:error, :timeout}
+            end
+          end)
+
+        case Task.await(t, timeout + 100) do
+          :ok ->
+            {"", state}
+
+          {:error, :timeout} ->
+            {encode_redis_error("Timeout"), state}
+
+          e ->
+            Logger.error("Unexpected Error #{inspect(e)} queue")
+            {encode_redis_error("Unexpected error"), state}
+        end
+
+      _ ->
+        {encode_redis_error("Invalid timeout"), state}
+    end
+  end
+
+  def handle(
+        ["JOBRESPOND", reference, response, private_key_str],
+        state
+      ) do
+    case DHTUtils.load_private_key(private_key_str) do
+      {:ok, private_key} ->
+        case Cachex.get!(:pids, reference) do
+          nil ->
+            Logger.warning("Responded to a unknown job.")
+            :ok
+
+          {pid, query_bin} ->
+            {:ok, signature} = DHTUtils.sign(query_bin <> response, private_key)
+
+            try do
+              send(pid, {reference, response, signature})
+            catch
+              kind, reason ->
+                formatted = Exception.format(kind, reason, __STACKTRACE__)
+                Logger.error("Registry.dispatch/3 failed with #{formatted}")
+            end
+        end
+
+        {redis_ok(), state}
+
+      _ ->
+        {encode_redis_error("Invalid private key"), state}
+    end
+  end
+
+  def handle(
+        ["JOBVERIFY", tree, method, argument, response, signature, public_key_str],
+        state
+      ) do
+    case DHTUtils.load_public_key(public_key_str) do
+      {:ok, key} ->
+        value = tree <> method <> argument <> response
+
+        if DHTUtils.verify_signature(key, value, signature) do
+          {encode_redis_integer(1), state}
+        else
+          {encode_redis_integer(0), state}
+        end
+
+      _ ->
+        {encode_redis_error("Invalid key"), state}
+    end
+  end
+
+  def handle(c, state) do
+    {handle_stateless(c, state), state}
+  end
+
   def handle_stateless(["PING"], _state) do
     encode_redis_string("PONG")
   end
@@ -765,309 +1065,6 @@ defmodule CrissCross.InternalRedis do
       _ ->
         encode_redis_error("Invalid TTL")
     end
-  end
-
-  def handle(
-        ["REMOTE", cluster, num_remotes, "JOBDO", tree, timeout_str, method, argument | rest],
-        %{make_store: make_store} = state
-      )
-      when rem(length(rest), 2) == 0 do
-    case Integer.parse(num_remotes) do
-      {num, _} when num > 0 ->
-        case Integer.parse(timeout_str) do
-          {timeout, _} when timeout > 0 ->
-            commands =
-              [method, argument | rest]
-              |> Enum.chunk_every(2)
-              |> Enum.map(fn [k, v] ->
-                {k, v}
-              end)
-
-            do_remote_job(cluster, num, tree, commands, state, timeout)
-
-          _ ->
-            {encode_redis_error("Invalid timeout"), state}
-        end
-
-      _ ->
-        {encode_redis_error("Invalid number of peers"), state}
-    end
-  end
-
-  def handle(
-        ["JOBDO", tree, timeout_str, method, argument | rest],
-        %{make_store: make_store} = state
-      )
-      when rem(length(rest), 2) == 0 do
-    case Integer.parse(timeout_str) do
-      {timeout, _} when timeout > 0 ->
-        t =
-          Task.async(fn ->
-            refs =
-              [method, argument | rest]
-              |> Enum.chunk_every(2)
-              |> Enum.map(fn [k, v] ->
-                ref = make_job_ref()
-
-                :ok =
-                  CrissCross.ProcessQueue.add_to_queue(
-                    tree,
-                    {tree <> k <> v, k, v, timeout, ref, self()}
-                  )
-
-                ref
-              end)
-
-            now = :os.sytem_time(:millisecond)
-
-            Enum.reduce_while(refs, {:ok, []}, fn ref, {:ok, acc} ->
-              time_left = timeout - (:os.sytem_time(:millisecond) - now)
-
-              receive do
-                {^ref, resp, signature} ->
-                  {:cont, {:ok, [encode_redis_list([resp, signature]) | acc]}}
-
-                {^ref, :queue_too_big} ->
-                  {:halt, {:error, encode_redis_string("Queue too big")}}
-              after
-                time_left ->
-                  {:halt, {:error, encode_redis_string("Timeout")}}
-              end
-            end)
-          end)
-
-        case Task.await(t, timeout + 100) do
-          {:ok, to_send} -> {encode_redis_list_raw(to_send), state}
-          {:error, to_send} -> {to_send, state}
-        end
-
-      _ ->
-        {encode_redis_error("Invalid timeout"), state}
-    end
-  end
-
-  def handle(
-        ["REMOTE", cluster, "1", "STREAMSTART", tree],
-        %{make_store: make_store, subscriptions: subscriptions, streams: streams} = state
-      ) do
-    ref = make_job_ref()
-    {:ok, peer_group} = PeerGroup.start_link(cluster, 1, tree)
-
-    try do
-      if PeerGroup.has_peer(peer_group, 5000) |> IO.inspect() do
-        case PeerGroup.get_conns(peer_group, 5_000) |> IO.inspect() do
-          [] ->
-            {encode_redis_error("No available connections"), state}
-
-          [{:quic, endpoint, conn, _} | _] ->
-            {:ok, pid} =
-              Task.Supervisor.start_child(CrissCross.TaskSupervisor, fn ->
-                subscribe_loop_send(nil, ref)
-              end)
-
-            case ExP2P.bidirectional_open(endpoint, conn, pid) do
-              {:ok, stream} ->
-                Cachex.put!(:waiting_streams, ref, {pid, ref})
-
-                {encode_redis_string(ref),
-                 %{
-                   state
-                   | streams:
-                       Map.put(streams, ref, {:remote_stream, cluster, endpoint, stream, tree})
-                 }}
-
-              {:error, error} ->
-                {encode_redis_error(error), state}
-            end
-        end
-      else
-        {encode_redis_error("No available peers"), state}
-      end
-    after
-      PeerGroup.stop(peer_group)
-    end
-  end
-
-  def handle(
-        ["STREAMSTART", tree],
-        %{make_store: make_store, streams: streams} = state
-      ) do
-    ref = make_job_ref()
-
-    {:ok, pid} =
-      Task.Supervisor.start_child(CrissCross.TaskSupervisor, fn ->
-        subscribe_loop_send_local(nil, ref)
-      end)
-
-    Cachex.put!(:waiting_streams, ref, {pid, ref})
-
-    {encode_redis_string(ref), %{state | streams: Map.put(streams, ref, {tree, pid})}}
-  end
-
-  def handle(
-        ["STREAMSTOP", ref],
-        %{make_store: make_store, streams: streams} = state
-      ) do
-    new_streams =
-      case Map.pop(streams, ref) do
-        {nil, _} ->
-          streams
-
-        {tree, s} when is_binary(tree) ->
-          s
-
-        {{:remote_stream, _cluster, endpoint, sender, _}, s} ->
-          ExP2P.stream_finish(endpoint, sender)
-          s
-      end
-
-    {redis_ok(), %{state | streams: new_streams}}
-  end
-
-  def handle(
-        ["STREAMSEND", ref, method, argument, timeout_str],
-        %{make_store: make_store, streams: streams} = state
-      ) do
-    case Integer.parse(timeout_str) do
-      {timeout, _} when timeout > 0 ->
-        case Map.get(streams, ref) do
-          nil ->
-            {redis_ok(), state}
-
-          {tree, pid} when is_binary(tree) ->
-            :ok =
-              CrissCross.ProcessQueue.add_to_queue(
-                tree,
-                {tree <> method <> argument, method, argument, timeout, ref, pid}
-              )
-
-            {redis_ok(), state}
-
-          {:remote_stream, cluster, endpoint, sender, tree} ->
-            payload = serialize_bert([tree, method, argument, timeout, ref])
-            encrypted = encrypt_cluster_message(cluster, payload)
-            command = ["STREAM", cluster, encrypted]
-
-            case ExP2P.stream_send(endpoint, sender, serialize_bert(command), 10_000) do
-              :ok -> {redis_ok(), state}
-              {:error, error} -> {encode_redis_error(error), state}
-            end
-        end
-
-      _ ->
-        {encode_redis_error("Invalid timeout"), state}
-    end
-  end
-
-  def handle(
-        ["JOBGET", tree, timeout_str],
-        %{make_store: make_store, socket: socket} = state
-      ) do
-    case Integer.parse(timeout_str) do
-      {timeout, _} when timeout > 0 ->
-        outer = self()
-
-        t =
-          Task.async(fn ->
-            CrissCross.ProcessQueue.get_next(tree)
-
-            receive do
-              {:queue_response, {query, method, arg_bin, timeout, ref, pid} = resp} ->
-                to_send =
-                  encode_redis_list_raw([
-                    encode_redis_string(method),
-                    encode_redis_string(arg_bin),
-                    encode_redis_string(ref)
-                  ])
-
-                Cachex.put!(:pids, ref, {pid, query}, ttl: timeout * 2)
-
-                res = :gen_tcp.send(socket, to_send)
-
-                case res do
-                  :ok ->
-                    :ok
-
-                  {:error, e} ->
-                    CrissCross.ProcessQueue.add_to_queue(tree, resp)
-                    :ok
-                end
-            after
-              timeout ->
-                {:error, :timeout}
-            end
-          end)
-
-        case Task.await(t, timeout + 100) do
-          :ok ->
-            {"", state}
-
-          {:error, :timeout} ->
-            {encode_redis_error("Timeout"), state}
-
-          e ->
-            Logger.error("Unexpected Error #{inspect(e)} queue")
-            {encode_redis_error("Unexpected error"), state}
-        end
-
-      _ ->
-        {encode_redis_error("Invalid timeout"), state}
-    end
-  end
-
-  def handle(
-        ["JOBRESPOND", reference, response, private_key_str],
-        %{make_store: make_store} = state
-      ) do
-    case DHTUtils.load_private_key(private_key_str) do
-      {:ok, private_key} ->
-        case Cachex.get!(:pids, reference) do
-          nil ->
-            Logger.warning("Responded to a unknown job.")
-            :ok
-
-          {pid, query_bin} ->
-            {:ok, signature} = DHTUtils.sign(query_bin <> response, private_key)
-
-            IO.inspect({reference, pid})
-
-            try do
-              send(pid, {reference, response, signature})
-            catch
-              kind, reason ->
-                formatted = Exception.format(kind, reason, __STACKTRACE__)
-                Logger.error("Registry.dispatch/3 failed with #{formatted}")
-            end
-        end
-
-        {redis_ok(), state}
-
-      _ ->
-        {encode_redis_error("Invalid private key"), state}
-    end
-  end
-
-  def handle(
-        ["JOBVERIFY", tree, method, argument, response, signature, public_key_str],
-        %{make_store: make_store} = state
-      ) do
-    case DHTUtils.load_public_key(public_key_str) do
-      {:ok, key} ->
-        value = tree <> method <> argument <> response
-
-        if DHTUtils.verify_signature(key, value, signature) do
-          {encode_redis_integer(1), state}
-        else
-          {encode_redis_integer(0), state}
-        end
-
-      _ ->
-        {encode_redis_error("Invalid key"), state}
-    end
-  end
-
-  def handle(c, state) do
-    {handle_stateless(c, state), state}
   end
 
   def handle_stateless(["VARGET", local_var], %{store: store}) do
@@ -1381,7 +1378,7 @@ defmodule CrissCross.InternalRedis do
         case Integer.parse(ttl) do
           {num, _} when num >= -1 ->
             case CrissCross.set_pointer(cluster, private_key, value, num) do
-              {l, _} -> encode_redis_string(l)
+              {l, _} when is_binary(l) -> encode_redis_string(l)
               {:error, e} -> encode_redis_error("#{inspect(e)}")
             end
 
@@ -1402,8 +1399,6 @@ defmodule CrissCross.InternalRedis do
       {port, _} when port >= 1 and port <= 65535 ->
         case Integer.parse(local_port_str) do
           {local_port, _} when local_port >= 1 and local_port <= 65535 ->
-            IO.inspect({:auth, public_token})
-
             ret =
               CrissCross.VPNClient.start_listening(
                 cluster,
@@ -1441,7 +1436,7 @@ defmodule CrissCross.InternalRedis do
 
   def handle_stateless(
         ["TUNNELALLOW", token, cluster, private_key_str, auth_token, host, port_str],
-        %{tunnel_token: tunnel_token} = state
+        %{tunnel_token: tunnel_token}
       ) do
     if tunnel_token != "" and tunnel_token != nil do
       if tunnel_token == token do

@@ -6,15 +6,13 @@ defmodule CrissCross.Application do
   alias CrissCrossDHT.Server.Utils
   import Cachex.Spec
 
-  @cypher "9YtgMwxnoSagovuViBbJ33drDaPpC6Mc2pVDpMLS8erc"
-  @public_key "2bDkyNhW9LBRtCsH9xuRRKmvWJtL7QjJ3mao1FkDypmn8kmViGsarw4"
-
-  # "2UPhq1AXgmhSd6etUcSQRPfm42mSREcjUixSgi9N8nU1YoC"
-  @cluster_name Utils.encode_human(Utils.hash(Utils.combine_to_sign([@cypher, @public_key])))
+  @cluster_name "2UPm6jo6SNfDQwc8Xa5BgBqw6NNubP3eqexN57oNwdxV3md"
 
   @process_name CrissCrossDHT.Server.Worker
 
   @default_udp 22222
+
+  @default_bootstrap "quic://5owBehSAPoSLBgKdeMZR9X9tKsgAqBHWrLxif6ZP7vrJ2BmUYbKn7mhB8Z@207.246.104.131:22222"
 
   def convert_ip(var, default) do
     ip_to_bind = System.get_env(var, default)
@@ -31,7 +29,7 @@ defmodule CrissCross.Application do
   def bootstrap_nodes() do
     System.get_env(
       "BOOTSTRAP_NODES",
-      "quic://8thbnFn4HZ24vVojR5qV6jsLCoqMaeBAVSxioBLmzGzC@76.176.199.49:#{@default_udp}"
+      @default_bootstrap
     )
     |> String.split(",")
     |> Enum.filter(fn c -> c != "" end)
@@ -96,15 +94,15 @@ defmodule CrissCross.Application do
 
         {storage, make_make_store}
 
-      %URI{scheme: "redis"} ->
-        storage = {CrissCrossDHT.Server.DHTRedis, [redis_opts: storage_backend]}
+      # %URI{scheme: "redis"} ->
+      #   storage = {CrissCrossDHT.Server.DHTRedis, [redis_opts: storage_backend]}
 
-        make_make_store = fn ->
-          {:ok, redis_conn} = Redix.start_link(storage_backend)
-          fn hash, ttl -> CrissCross.Store.Local.create(redis_conn, hash, ttl) end
-        end
+      #   make_make_store = fn ->
+      #     {:ok, redis_conn} = Redix.start_link(storage_backend)
+      #     fn hash, ttl -> CrissCross.Store.Local.create(redis_conn, hash, ttl) end
+      #   end
 
-        {storage, make_make_store}
+      #   {storage, make_make_store}
 
       _ ->
         raise "Invalid STORAGE_BACKEND config"

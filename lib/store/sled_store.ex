@@ -95,7 +95,7 @@ defimpl CubDB.Store, for: CrissCross.Store.SledStore do
         n
       ) do
     bin = serialize_bert(n)
-    loc = hash(bin)
+    loc = hash(bin, 80)
     count = Agent.get_and_update(node_count_pid, fn count -> {count, count + byte_size(bin)} end)
 
     if not String.starts_with?(loc, <<0x01>>) do
@@ -157,7 +157,7 @@ defimpl CubDB.Store, for: CrissCross.Store.SledStore do
 
   def get_node(
         %SledStore{},
-        {_, <<0x01, _::integer-size(8), size::integer-size(8), b::binary-size(size), _::binary>>}
+        {_, <<0x01, size::integer-size(8), b::binary-size(size), _::binary>>}
       ) do
     deserialize_bert(b)
   end

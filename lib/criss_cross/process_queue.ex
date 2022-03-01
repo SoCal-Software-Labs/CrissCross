@@ -10,7 +10,7 @@ defmodule CrissCross.ProcessQueue do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
   end
 
-  def init(path) do
+  def init(:ok) do
     Process.send_after(self(), :clean, @clean_timer)
     {:ok, %{waiting: %{}, queues: %{}}}
   end

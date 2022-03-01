@@ -2,10 +2,11 @@ defmodule CrissCross.ValueCloner do
   use GenServer
 
   alias CubDB.Store
-  alias CrissCross.ConnectionCache
+  alias CrissCross.PeerGroup
   alias CrissCross.Store.CachedRPC
   alias CrissCrossDHT.Server.Utils
-
+  alias CrissCross.Utils.{MaxTransferExceeded, MissingHashError}
+  import CrissCross.Utils, only: [cluster_max_transfer_size: 1]
   require Logger
 
   @interval 10000
@@ -39,25 +40,29 @@ defmodule CrissCross.ValueCloner do
       ) do
     pid = self()
 
-    peers = CrissCross.find_peers_for_header(cluster, tree, 1, [])
+    {:ok, peer_group} = PeerGroup.start_link(cluster, 1, tree)
 
-    conns =
-      Enum.reduce_while(peers, [], fn peer, conns ->
-        case ConnectionCache.get_conn(cluster, peer.ip, peer.port) do
-          {:ok, conn} ->
-            {:cont, [conn | conns]}
+    try do
+      if PeerGroup.has_peer(peer_group, 5000) do
+        Logger.error(
+          "Could not find peers for #{Utils.encode_human(cluster)} #{Utils.encode_human(tree)}"
+        )
 
-          {:error, error} ->
-            Logger.error("Could not connect to peer #{inspect(peer)} #{inspect(error)}")
-            {:cont, conns}
+        if attempts < @max_attempts do
+          Logger.info("Putting tree #{Utils.encode_human(tree)} back in queue.")
+          Process.send_after(pid, {:queue, cluster, tree, ttl, attempts + 1}, @interval * 2)
+        else
+          Logger.warning(
+            "Max attempts to clone tree #{Utils.encode_human(tree)} for cluster #{Utils.encode_human(cluster)} reached. Quitting."
+          )
         end
-      end)
 
-    case conns do
-      [_ | _] ->
+        send(pid, :process_queue)
+        {:noreply, %{state | queue: rest}}
+      else
         new_make_store = fn hash ->
           {:ok, store} = make_store.(hash, ttl)
-          CachedRPC.create(conns, hash, store)
+          CachedRPC.create(peer_group, cluster, hash, store)
         end
 
         Task.start(fn ->
@@ -66,11 +71,11 @@ defmodule CrissCross.ValueCloner do
           try do
             {:ok, store} = new_make_store.(tree)
             :ok = CrissCross.clone(store, new_make_store)
-            max_transfer = Utils.cluster_max_transfer_size(cluster)
+            max_transfer = cluster_max_transfer_size(cluster)
 
             case Store.get_latest_header(store) do
               {{written, _}, _} when written > max_transfer ->
-                raise Utils.MaxTransferExceeded
+                raise MaxTransferExceeded
 
               _ ->
                 :ok
@@ -88,12 +93,12 @@ defmodule CrissCross.ValueCloner do
             Store.close(store)
             Logger.info("Cloned #{Utils.encode_human(cluster)} #{Utils.encode_human(tree)}")
           rescue
-            Utils.MaxTransferExceeded ->
+            MaxTransferExceeded ->
               Logger.error(
                 "Error cloning #{Utils.encode_human(tree)}: maximum transfer size exceeded."
               )
 
-            Utils.MissingHashError ->
+            MissingHashError ->
               Logger.error(
                 "Error cloning #{Utils.encode_human(tree)}: could not find value for node."
               )
@@ -112,23 +117,9 @@ defmodule CrissCross.ValueCloner do
         end)
 
         {:noreply, %{state | queue: rest}}
-
-      _ ->
-        Logger.error(
-          "Could not find peers for #{Utils.encode_human(cluster)} #{Utils.encode_human(tree)}"
-        )
-
-        if attempts < @max_attempts do
-          Logger.info("Putting tree #{Utils.encode_human(tree)} back in queue.")
-          Process.send_after(pid, {:queue, cluster, tree, ttl, attempts + 1}, @interval * 2)
-        else
-          Logger.warning(
-            "Max attempts to clone tree #{Utils.encode_human(tree)} for cluster #{Utils.encode_human(cluster)} reached. Quitting."
-          )
-        end
-
-        send(pid, :process_queue)
-        {:noreply, %{state | queue: rest}}
+      end
+    after
+      PeerGroup.stop(pid)
     end
   end
 

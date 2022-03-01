@@ -30,7 +30,7 @@ RUN . $HOME/.cargo/env && mix do compile, release
 
 # prepare release image
 FROM debian:buster-slim AS app
-RUN apt-get update && apt-get install -y libssl-dev locales && rm -rf /var/lib/apt/lists/* && echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen
+RUN apt-get update && apt-get install -y build-essential inotify-tools libssl-dev locales && rm -rf /var/lib/apt/lists/* && echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen
 
 
 EXPOSE 11111

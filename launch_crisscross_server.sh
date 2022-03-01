@@ -21,6 +21,7 @@ fi
 
 echo "$STORAGE_BACKEND"
 
+IMAGE=hansonkd/crisscross:v0.0.3
 CRISSCROSS_IMAGE="${CRISSCROSS_IMAGE:-crisscross}"
 INTERNAL_TCP_PORT="${INTERNAL_TCP_PORT:-11111}"
 EXTERNAL_PORT="${EXTERNAL_PORT:-22222}"
@@ -41,7 +42,7 @@ $COMMAND container rm crisscross 2> /dev/null
 ($COMMAND run \
     --rm \
     -it \
-    --user 1000:1000 \
+    -u `id -u`:`id -g` \
     -v $DATA_DIR:/data \
     -v $CLUSTER_DIR:/app/clusters \
     -v $KEY_DIR:/app/keys \
@@ -51,10 +52,10 @@ $COMMAND container rm crisscross 2> /dev/null
     -e "EXTERNAL_IP=$EXTERNAL_IP" \
     -e "STORAGE_BACKEND=$STORAGE_BACKEND" \
     -e "LOCAL_AUTH=$LOCAL_AUTH" \
-    --name hansonkd/crisscross \
+    --name crisscross \
     -p $INTERNAL_TCP_PORT:$INTERNAL_TCP_PORT \
     -p "$EXTERNAL_PORT:$EXTERNAL_PORT/UDP" \
-    crisscross 2>&1 | sed -e 's/^\(.*\)$/'"$GREEN"'[CrissCross] \1'"$NONE"'/'
+    $IMAGE
 )
 
 

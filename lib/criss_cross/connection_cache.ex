@@ -1,6 +1,4 @@
 defmodule CrissCross.ConnectionCache do
-  @encrypt true
-
   import CrissCross.Utils
   import CrissCrossDHT.Server.Utils, only: [encrypt: 2, tuple_to_ipstr: 2]
 
@@ -141,12 +139,11 @@ defmodule CrissCross.ConnectionCache do
 
   def conn_ip_tuple({:quic, _, _, ip_tuple}), do: ip_tuple
 
-  def connect(endpoint, cluster, remote_ip, port) do
+  def connect(endpoint, _cluster, remote_ip, port) do
     r =
       case ExP2P.connect(endpoint, [tuple_to_ipstr(remote_ip, port)], @ping_timeout) do
         {:ok, conn} ->
-          case ExP2P.bidirectional(endpoint, conn, serialize_bert(["PING"]), @ping_timeout)
-               |> IO.inspect() do
+          case ExP2P.bidirectional(endpoint, conn, serialize_bert(["PING"]), @ping_timeout) do
             {:ok, @pong_reply} -> {:commit, {:quic, endpoint, conn, {remote_ip, port}}}
             e -> {:ignore, e}
           end

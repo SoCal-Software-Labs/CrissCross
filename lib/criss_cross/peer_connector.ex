@@ -64,8 +64,6 @@ defmodule CrissCross.PeerGroup do
       when is_number(target) do
     task_pid = self()
 
-    IO.inspect({:starting, cluster, tree_hash, target, task_pid})
-
     CrissCrossDHT.search(cluster, tree_hash, fn
       :done ->
         send(task_pid, :done)
@@ -74,10 +72,7 @@ defmodule CrissCross.PeerGroup do
         n = %{ip: ip, port: port, meta: meta}
 
         if Cachex.get(:blacklisted_ips, {ip, port}) == {:ok, nil} do
-          IO.inspect({:sending, task_pid, ip, port})
           send(task_pid, {:new_peer, n})
-        else
-          IO.inspect({:backlisted, ip, port})
         end
     end)
 
@@ -86,7 +81,7 @@ defmodule CrissCross.PeerGroup do
       peer -> send(task_pid, {:new_peer, peer})
     end
 
-    state |> IO.inspect()
+    state
   end
 
   def start_search(
@@ -128,8 +123,6 @@ defmodule CrissCross.PeerGroup do
         {:has_peer, pid, ref},
         %{waiting_has_peer: waiting_has_peer, peers: peers, target: target} = state
       ) do
-    IO.inspect({:has, peers})
-
     case target do
       t when is_number(t) ->
         if length(peers) >= 1 do
@@ -153,9 +146,7 @@ defmodule CrissCross.PeerGroup do
           active_connections: active_connections
         } = state
       ) do
-    IO.inspect({active_connections, peers_with_conns})
-
-    if Map.size(active_connections) > 0 do
+    if map_size(active_connections) > 0 do
       send(pid, {ref, active_connections |> Map.keys()})
       {:noreply, state}
     else
@@ -182,7 +173,7 @@ defmodule CrissCross.PeerGroup do
           active_connections: active_connections
         } = state
       ) do
-    should_save = not is_number(target) or Map.size(active_connections) <= target
+    should_save = not is_number(target) or map_size(active_connections) <= target
 
     Enum.each(waiting_connection, fn {pid, ref} -> send(pid, {ref, [conn]}) end)
 
@@ -208,8 +199,6 @@ defmodule CrissCross.PeerGroup do
           waiting_connection: waiting_connection
         } = state
       ) do
-    IO.inspect(:done)
-
     for {pid, ref} <- waiting_connection do
       send(pid, {ref, []})
     end
@@ -261,8 +250,6 @@ defmodule CrissCross.PeerGroup do
         (length(peers_with_conns) < target and
            Cachex.get(:blacklisted_ips, {peer.ip, peer.port}) == {:ok, nil})
 
-    IO.inspect({:new_peer, peer, should_start})
-
     if should_start do
       Enum.each(waiting_has_peer, fn {pid, ref} -> send(pid, {ref, true}) end)
 
@@ -286,7 +273,6 @@ defmodule CrissCross.PeerGroup do
     Task.start(fn ->
       case ConnectionCache.get_conn(cluster, peer.ip, peer.port) do
         {:ok, conn} ->
-          IO.inspect({:conn, conn})
           send(this_pid, {:new_conn, peer, conn})
 
         {:error, error} ->

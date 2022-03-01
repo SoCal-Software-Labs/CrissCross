@@ -32,9 +32,8 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
   alias CrissCross.Store.CachedRPC
   import CrissCross.Utils
   alias CrissCross.Utils
-  alias CrissCross.ConnectionCache
   alias CrissCross.PeerGroup
-  import CrissCrossDHT.Server.Utils, only: [encrypt: 2, decrypt: 2]
+  import CrissCrossDHT.Server.Utils, only: [decrypt: 2]
 
   require Logger
 
@@ -124,7 +123,7 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
       }) do
     if max_transfer != nil do
       new_bytes_transferred =
-        Agent.get_update(transfered_pid, fn old ->
+        Agent.get_and_update(transfered_pid, fn old ->
           new_size = old + :erlang.external_size(result)
           {new_size, new_size}
         end)

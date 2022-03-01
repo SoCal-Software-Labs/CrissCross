@@ -4,6 +4,8 @@ defmodule CrissCross.VPNClient do
   alias CrissCrossDHT.Server.Utils, as: DHTUtils
   require Logger
 
+  @max_attempts 3
+
   def shutdown_port(local_port) do
     Registry.dispatch(CrissCross.VPNClientRegistry, local_port, fn entries ->
       for {_pid, socket} <- entries, do: :gen_tcp.close(socket)
@@ -13,7 +15,6 @@ defmodule CrissCross.VPNClient do
   def start_listening(cluster, tree, public_token, local_port, host, port) do
     case Registry.lookup(CrissCross.VPNClientRegistry, local_port) do
       [] ->
-        IO.inspect({:auth, tree, public_token})
         {:ok, peer_group} = PeerGroup.start_link(cluster, 1, tree)
         try_listen_peer_group(peer_group, cluster, tree, public_token, local_port, host, port)
 
@@ -72,7 +73,7 @@ defmodule CrissCross.VPNClient do
                                 false
                               end
 
-                            {:error, e} ->
+                            {:error, _e} ->
                               Logger.warning("Invalid public key from #{peer_addr}")
                               false
                           end
@@ -117,7 +118,7 @@ defmodule CrissCross.VPNClient do
       end
     rescue
       e ->
-        Logger.error("Tunnel: Error initializing stream")
+        Logger.error("Tunnel: Error initializing stream #{inspect(e)}")
         PeerGroup.stop(peer_group)
     end
   end
@@ -262,7 +263,7 @@ defmodule CrissCross.VPNClient do
                             )
                           end
 
-                        {:error, e} ->
+                        {:error, _e} ->
                           Logger.warning(
                             "Tunnel: #{peer_addr} New connection returned invalid public key"
                           )
@@ -307,7 +308,6 @@ defmodule CrissCross.VPNClient do
     receive do
       {:tcp, ^socket, data} ->
         :inet.setopts(socket, active: :once)
-        method = ""
         argument = "vpn-msg" <> serialize_bert({ref, number, data})
 
         ret =

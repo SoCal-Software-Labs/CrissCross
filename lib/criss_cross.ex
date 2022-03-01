@@ -1,7 +1,4 @@
 defmodule CrissCross do
-  alias CrissCross.ConnectionCache
-  alias CubDB.Btree
-
   require Logger
 
   @value CubDB.Btree.__value__()
@@ -178,89 +175,6 @@ defmodule CrissCross do
       CubDB.Store.close(store)
     end)
     |> Stream.run()
-  end
-
-  def byte_size(local_store, cluster, tree_hash) do
-    byte_size(local_store, cluster, tree_hash, false)
-  end
-
-  def byte_size(local_store, cluster, tree_hash, false) do
-    case CubDB.Store.get_latest_header(local_store) do
-      nil ->
-        do_byte_size(cluster, tree_hash, fn remote_conn ->
-          CrissCross.Store.CachedRPC.create(remote_conn, tree_hash, local_store)
-        end)
-
-      _ ->
-        tree_size(local_store)
-    end
-  end
-
-  def byte_size(local_store, cluster, tree_hash, true) do
-    do_byte_size(cluster, tree_hash, fn remote_conn ->
-      CrissCross.Store.CachedRPC.create(remote_conn, tree_hash, local_store)
-    end)
-  end
-
-  def do_byte_size(cluster, tree_hash, store) do
-    peers = find_peers_for_header(cluster, tree_hash)
-
-    case peers do
-      [peer | _] ->
-        case ConnectionCache.get_conn(cluster, peer.ip, peer.port) do
-          {:ok, conn} ->
-            {:ok, remote_store} = store.(conn)
-            tree_size(remote_store)
-
-          e ->
-            e
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  def find_key(local_store, cluster, tree_hash, key) do
-    find_key(local_store, cluster, tree_hash, key, false)
-  end
-
-  def find_key(local_store, cluster, tree_hash, key, false) do
-    case CubDB.Store.get_latest_header(local_store) do
-      nil ->
-        do_lookup_key(cluster, tree_hash, key, fn remote_conn ->
-          CrissCross.Store.CachedRPC.create(remote_conn, tree_hash, local_store)
-        end)
-
-      _ ->
-        tree_size(local_store)
-    end
-  end
-
-  def find_key(local_store, cluster, tree_hash, key, true) do
-    do_lookup_key(cluster, tree_hash, key, fn remote_conn ->
-      CrissCross.Store.CachedRPC.create(remote_conn, tree_hash, local_store)
-    end)
-  end
-
-  def do_lookup_key(cluster, tree_hash, key, store) do
-    peers = find_peers_for_header(cluster, tree_hash)
-
-    case peers do
-      [peer | _] ->
-        case ConnectionCache.get_conn(cluster, peer.ip, peer.port) do
-          {:ok, conn} ->
-            {:ok, remote_store} = store.(conn)
-            btree = Btree.new(remote_store)
-            Btree.fetch(btree, key)
-
-          e ->
-            e
-        end
-
-      _ ->
-        nil
-    end
   end
 
   def tree_size(store) do

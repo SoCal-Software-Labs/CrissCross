@@ -14,7 +14,7 @@ defmodule CrissCross.CommandQueue do
     %{stream_agent: pid}
   end
 
-  def handle_new_message("vpn" <> msg, sender, from, endpoint, local_store, state) do
+  def handle_new_message("vpn" <> msg, sender, _from, endpoint, _local_store, _state) do
     try do
       case msg do
         "-msg" <> msg ->
@@ -171,6 +171,11 @@ defmodule CrissCross.CommandQueue do
     end
   end
 
+  def handle_new_message(msg, sender, from, endpoint, local_store, state) do
+    Task.start(fn -> queue_msg(msg, sender, from, endpoint, local_store, state, 0) end)
+    state
+  end
+
   def loop_vpn(socket, ref, endpoint, sender, reader_num, writer_num) do
     receive do
       {^ref, num, data} ->
@@ -196,11 +201,6 @@ defmodule CrissCross.CommandQueue do
       {:tcp_closed, ^socket} ->
         :ok
     end
-  end
-
-  def handle_new_message(msg, sender, from, endpoint, local_store, state) do
-    Task.start(fn -> queue_msg(msg, sender, from, endpoint, local_store, state, 0) end)
-    state
   end
 
   def write_error(endpoint, sender, msg) do
@@ -390,7 +390,9 @@ defmodule CrissCross.CommandQueue do
                       {{pid, local_ref, timer}, other_streams} ->
                         Process.cancel_timer(timer)
                         new_timer = Process.send_after(pid, {local_ref, :stop}, timeout)
-                        {{pid, local_ref}, Map.put(other_streams, key, {pid, local_ref, timer})}
+
+                        {{pid, local_ref},
+                         Map.put(other_streams, key, {pid, local_ref, new_timer})}
 
                       {nil, other_streams} ->
                         local_ref = make_job_ref()
