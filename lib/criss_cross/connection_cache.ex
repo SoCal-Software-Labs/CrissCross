@@ -146,9 +146,12 @@ defmodule CrissCross.ConnectionCache do
 
   def connect(endpoint, _cluster, remote_ip, port) do
     r =
-      case ExP2P.connect(endpoint, [tuple_to_ipstr(remote_ip, port)], @ping_timeout) do
+      case ExP2P.connect(endpoint, [tuple_to_ipstr(remote_ip, port)], @ping_timeout)
+           |> IO.inspect()
+           |> IO.inspect() do
         {:ok, conn} ->
-          case ExP2P.pseudo_bidirectional(endpoint, conn, serialize_bert(["PING"]), @ping_timeout) do
+          case ExP2P.pseudo_bidirectional(endpoint, conn, serialize_bert(["PING"]), @ping_timeout)
+               |> IO.inspect() do
             {:ok, @pong_reply} -> {:commit, {:quic, endpoint, conn, {remote_ip, port}}}
             e -> {:ignore, e}
           end

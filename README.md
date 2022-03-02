@@ -264,7 +264,7 @@ import os
 import crisscross as cx
 
 
-token = os.getenv("TUNNEL_TOKEN")
+token = "123"
 name = cx.read_var("*./keys/my_tunnel.yaml#Name")
 cluster = cx.read_var("^defaultcluster")
 client = cx.CrissCross()
