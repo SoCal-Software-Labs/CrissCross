@@ -32,9 +32,8 @@ defmodule CrissCross.VPNClient do
 
           [{:quic, endpoint, conn, {ip, conn_port}} = peer_conn | _] ->
             peer_addr = DHTUtils.tuple_to_ipstr(ip, conn_port)
-            IO.inspect({"connected to #{inspect(peer_addr)}"})
 
-            case ExP2P.pseudo_bidirectional_open(endpoint, conn, self()) |> IO.inspect() do
+            case ExP2P.pseudo_bidirectional_open(endpoint, conn, self()) do
               {:ok, stream} ->
                 challenge = :crypto.strong_rand_bytes(40)
 
@@ -338,6 +337,8 @@ defmodule CrissCross.VPNClient do
             argument,
             10_000
           )
+
+        ExP2P.stream_finish(endpoint, stream)
 
         :ok
 

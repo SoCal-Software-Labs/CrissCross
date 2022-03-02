@@ -7,7 +7,7 @@ defmodule CrissCross.ConnectionCache do
   require Logger
 
   @interval 60 * 1000
-  @ping_timeout 3000
+  @ping_timeout 1000
   @pong_reply serialize_bert({:ok, "PONG"})
 
   def start_link(_) do
@@ -15,7 +15,7 @@ defmodule CrissCross.ConnectionCache do
   end
 
   def get_conn(cluster, ip, port) do
-    GenServer.call(__MODULE__, {:get_conn, {cluster, ip, port}})
+    GenServer.call(__MODULE__, {:get_conn, {cluster, ip, port}}, 10_000)
   end
 
   def return(conn) do
@@ -146,12 +146,9 @@ defmodule CrissCross.ConnectionCache do
 
   def connect(endpoint, _cluster, remote_ip, port) do
     r =
-      case ExP2P.connect(endpoint, [tuple_to_ipstr(remote_ip, port)], @ping_timeout)
-           |> IO.inspect()
-           |> IO.inspect() do
+      case ExP2P.connect(endpoint, [tuple_to_ipstr(remote_ip, port)], @ping_timeout) do
         {:ok, conn} ->
-          case ExP2P.pseudo_bidirectional(endpoint, conn, serialize_bert(["PING"]), @ping_timeout)
-               |> IO.inspect() do
+          case ExP2P.pseudo_bidirectional(endpoint, conn, serialize_bert(["PING"]), @ping_timeout) do
             {:ok, @pong_reply} -> {:commit, {:quic, endpoint, conn, {remote_ip, port}}}
             e -> {:ignore, e}
           end
