@@ -824,7 +824,7 @@ defmodule CrissCross.InternalRedis do
                 subscribe_loop_send(nil, ref)
               end)
 
-            case ExP2P.bidirectional_open(endpoint, conn, pid) do
+            case ExP2P.pseudo_bidirectional_open(endpoint, conn, pid) do
               {:ok, stream} ->
                 Cachex.put!(:waiting_streams, ref, {pid, ref})
 
