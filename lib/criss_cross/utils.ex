@@ -148,4 +148,8 @@ defmodule CrissCross.Utils do
     <<u0::48, _::4, u1::12, _::2, u2::62>> = :crypto.strong_rand_bytes(16)
     <<u0::48, @uuid_v4::4, u1::12, @variant10::2, u2::62>>
   end
+
+  def no_route_ref() do
+    <<0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>>
+  end
 end

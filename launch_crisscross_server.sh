@@ -21,7 +21,7 @@ fi
 
 echo "$STORAGE_BACKEND"
 
-IMAGE=hansonkd/crisscross:v0.0.3b
+IMAGE=hansonkd/crisscross:v0.0.3c
 CRISSCROSS_IMAGE="${CRISSCROSS_IMAGE:-crisscross}"
 INTERNAL_TCP_PORT="${INTERNAL_TCP_PORT:-11111}"
 EXTERNAL_PORT="${EXTERNAL_PORT:-22222}"
@@ -51,6 +51,7 @@ $COMMAND container rm crisscross 2> /dev/null
     -e "EXTERNAL_IP=$EXTERNAL_IP" \
     -e "STORAGE_BACKEND=$STORAGE_BACKEND" \
     -e "LOCAL_AUTH=$LOCAL_AUTH" \
+    -e "TUNNEL_TOKEN" \
     --name crisscross \
     -p $INTERNAL_TCP_PORT:$INTERNAL_TCP_PORT \
     -p "$EXTERNAL_PORT:$EXTERNAL_PORT/UDP" \

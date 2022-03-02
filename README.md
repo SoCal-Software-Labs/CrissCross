@@ -280,7 +280,7 @@ Take the `Name` value from `./keys/my_tunnel.yaml` and distribute it to the clie
 import crisscross as cx
 
 
-name = cx.read_var("") # Replace with name from ./keys/my_tunnel.yaml
+name = cx.read_var("2UPgX4LiLDzNbY4v6PRKN21MHVFDY4kLetsCbY4KXBEPMrx") # Replace with name from ./keys/my_tunnel.yaml
 cluster = cx.read_var("^defaultcluster")
 client = cx.CrissCross()
 client.tunnel_open(cluster, name, "SECRETPASS", 7777, "www.httpbin.org", 80)

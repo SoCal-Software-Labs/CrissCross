@@ -1,6 +1,6 @@
 defmodule CrissCross.ConnectionCache do
   import CrissCross.Utils
-  import CrissCrossDHT.Server.Utils, only: [encrypt: 2, tuple_to_ipstr: 2]
+  import CrissCrossDHT.Server.Utils, only: [tuple_to_ipstr: 2]
 
   use GenServer
 
@@ -26,7 +26,12 @@ defmodule CrissCross.ConnectionCache do
     encrypted = encrypt_cluster_message(cluster, payload)
 
     ret =
-      ExP2P.bidirectional(endpoint, conn, serialize_bert([command, cluster, encrypted]), timeout)
+      ExP2P.pseudo_bidirectional(
+        endpoint,
+        conn,
+        serialize_bert([command, cluster, encrypted]),
+        timeout
+      )
 
     case ret do
       {:ok, s} -> deserialize_bert(s)

@@ -173,6 +173,7 @@ defmodule CrissCross.CommandQueue do
 
   def handle_new_message(msg, sender, from, endpoint, local_store, state) do
     Task.start(fn -> queue_msg(msg, sender, from, endpoint, local_store, state, 0) end)
+
     state
   end
 

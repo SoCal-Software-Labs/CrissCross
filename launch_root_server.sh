@@ -12,7 +12,7 @@
     -e "STORAGE_BACKEND=sled:///data" \
     -e "BOOTSTRAP_NODES=" \
     --name crisscross \
-    -p "$EXTERNAL_PORT:22222/UDP" \
+    -p "22222:22222/UDP" \
     -d \
-    hansonkd/crisscross:v0.0.3
+    hansonkd/crisscross:v0.0.3b
 )
