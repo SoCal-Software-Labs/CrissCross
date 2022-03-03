@@ -251,8 +251,6 @@ defmodule CrissCross.PeerGroup do
         (map_size(active_connections) < target and
            Cachex.get(:blacklisted_ips, {peer.ip, peer.port}) == {:ok, nil})
 
-    IO.inspect({peer, should_start, peers_with_conns})
-
     if should_start do
       Enum.each(waiting_has_peer, fn {pid, ref} -> send(pid, {ref, true}) end)
 

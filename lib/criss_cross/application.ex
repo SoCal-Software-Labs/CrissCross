@@ -17,13 +17,11 @@ defmodule CrissCross.Application do
   def convert_ip(var, default) do
     ip_to_bind = System.get_env(var, default)
 
-    [a, b, c, d] =
-      ip_to_bind
-      |> String.split(".")
-      |> Enum.map(&String.to_integer/1)
+    IO.inspect(ip_to_bind)
 
-    bind_ip = {a, b, c, d}
-    {ip_to_bind, bind_ip}
+    {:ok, addr} = :inet.parse_address(String.to_charlist(ip_to_bind))
+
+    {ip_to_bind, addr}
   end
 
   def bootstrap_nodes() do
@@ -131,7 +129,7 @@ defmodule CrissCross.Application do
 
     name_dir = System.get_env("KEY_DIR", "./keys") |> String.trim_trailing("?") |> Path.expand()
 
-    {ip, external_ip} = convert_ip("EXTERNAL_IP", "127.0.0.1")
+    # {ip, external_ip} = convert_ip("EXTERNAL_IP", "127.0.0.1")
     {ip_to_bind, bind_ip} = convert_ip("BIND_IP", "127.0.0.1")
 
     bootstrap_nodes = bootstrap_nodes()
@@ -139,7 +137,7 @@ defmodule CrissCross.Application do
     bootstrap_nodes_for_endpoint =
       bootstrap_nodes
       |> Enum.map(fn %{host: ip, port: port, node_id: node_id} -> {node_id, ip, port} end)
-      |> Utils.resolve_hostnames(:ipv4)
+      |> Utils.resolve_hostnames(:ipv6)
       |> Enum.map(fn {_, host, port} -> Utils.tuple_to_ipstr(host, port) end)
 
     {storage, make_make_store} = get_backends(storage_backend)
@@ -151,7 +149,7 @@ defmodule CrissCross.Application do
     dht_config = %{
       bootstrap_overlay: bootstrap_overlay,
       port: external_port,
-      ipv4_addr: external_ip,
+      # ipv4_addr: external_ip,
       dispatcher: ExP2P.Dispatcher,
       bind_ip: bind_ip,
       cluster_dir: cluster_dir,
@@ -165,7 +163,17 @@ defmodule CrissCross.Application do
     }
 
     dispatcher_callback = fn endpoint, _connection, msg, sender, from, state ->
-      [l, r] = String.split(from, ":")
+      {l, r} =
+        case from do
+          "[" <> rest ->
+            [l, r] = String.split(rest, "]:", parts: 2)
+            {l, r}
+
+          _ ->
+            [l, r] = String.split(from, ":", parts: 2)
+            {l, r}
+        end
+
       {:ok, addr} = :inet.parse_address(String.to_charlist(l))
 
       if is_nil(sender) do
@@ -183,7 +191,7 @@ defmodule CrissCross.Application do
       {Registry, keys: :unique, name: CrissCross.VPNRegistry},
       {Registry, keys: :unique, name: CrissCross.VPNClientRegistry},
       {ExP2P.Dispatcher,
-       bind_addr: "#{ip_to_bind}:#{external_port}",
+       bind_addr: Utils.tuple_to_ipstr(bind_ip, external_port),
        bootstrap_nodes: bootstrap_nodes_for_endpoint,
        connection_mod: ExP2P.Connection,
        connection_mod_args: %{
@@ -247,7 +255,6 @@ defmodule CrissCross.Application do
       {CrissCrossDHT.Supervisor, node_id: node_id, worker_name: @process_name, config: dht_config}
     ]
 
-    Logger.info("Exposing IP #{ip}")
     Logger.info("Binding on #{ip_to_bind}")
 
     ## Start the main supervisor

@@ -13,6 +13,14 @@ NONE=$(tput op)
 
 COMMAND=docker
 
+
+
+if [[ ! -z "${IPV4}" ]]; then
+  BIND_IP="0.0.0.0"
+else
+  BIND_IP="::0"
+fi
+
 if ! command -v docker &> /dev/null
 then
     echo "You must have podman or docker installed"
@@ -21,7 +29,7 @@ fi
 
 echo "$STORAGE_BACKEND"
 
-IMAGE=hansonkd/crisscross:v0.0.3f
+IMAGE=hansonkd/crisscross:v0.0.4c
 CRISSCROSS_IMAGE="${CRISSCROSS_IMAGE:-crisscross}"
 INTERNAL_TCP_PORT="${INTERNAL_TCP_PORT:-11111}"
 EXTERNAL_PORT="${EXTERNAL_PORT:-22222}"
@@ -47,14 +55,14 @@ $COMMAND container rm crisscross 2> /dev/null
     -v $CLUSTER_DIR:/app/clusters \
     -v $KEY_DIR:/app/keys \
     -e "INTERNAL_TCP_PORT=$INTERNAL_TCP_PORT" \
-    -e "BIND_IP=0.0.0.0" \
+    -e "BIND_IP=$BIND_IP" \
     -e "EXTERNAL_IP=$EXTERNAL_IP" \
     -e "STORAGE_BACKEND=$STORAGE_BACKEND" \
     -e "LOCAL_AUTH=$LOCAL_AUTH" \
     -e "TUNNEL_TOKEN" \
+    -e "BOOTSTRAP_NODES" \
     --name crisscross \
-    -p $INTERNAL_TCP_PORT:$INTERNAL_TCP_PORT \
-    -p "$EXTERNAL_PORT:$EXTERNAL_PORT/UDP" \
+    --network=host \
     $IMAGE
 )
 

@@ -33,7 +33,7 @@ defmodule CrissCross.VPNClient do
           [{:quic, endpoint, conn, {ip, conn_port}} = peer_conn | _] ->
             peer_addr = DHTUtils.tuple_to_ipstr(ip, conn_port)
 
-            case ExP2P.pseudo_bidirectional_open(endpoint, conn, self()) do
+            case ExP2P.bidirectional_open(endpoint, conn, self()) do
               {:ok, stream} ->
                 challenge = :crypto.strong_rand_bytes(40)
 
@@ -170,7 +170,7 @@ defmodule CrissCross.VPNClient do
         port,
         attempt
       ) do
-    if PeerGroup.has_peer(peer_group, 5000) do
+    if PeerGroup.has_peer(peer_group, 5_000) do
       case PeerGroup.get_conns(peer_group, 5_000) do
         [] ->
           Logger.warning("Tunnel: no connections")
@@ -184,7 +184,7 @@ defmodule CrissCross.VPNClient do
         [{:quic, endpoint, conn, {ip, conn_port}} = peer_conn | _] ->
           peer_addr = DHTUtils.tuple_to_ipstr(ip, conn_port)
 
-          case ExP2P.pseudo_bidirectional_open(endpoint, conn, self()) do
+          case ExP2P.bidirectional_open(endpoint, conn, self()) do
             {:ok, stream} ->
               challenge = :crypto.strong_rand_bytes(40)
 
