@@ -60,9 +60,10 @@ $COMMAND container rm crisscross 2> /dev/null
     -e "STORAGE_BACKEND=$STORAGE_BACKEND" \
     -e "LOCAL_AUTH=$LOCAL_AUTH" \
     -e "TUNNEL_TOKEN" \
+    -e "EXTERNAL_PORT" \
     -e "BOOTSTRAP_NODES" \
     --name crisscross \
-    --network=host \
+    -p "$EXTERNAL_PORT:$EXTERNAL_PORT/UDP" \
     $IMAGE
 )
 

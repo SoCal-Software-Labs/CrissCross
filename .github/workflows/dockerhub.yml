@@ -1,26 +1,36 @@
 on:
-  release:
-    types: [created]
+  push:
+    branches:
+      - "*"
+  # release:
+  #   types: [created]
 
 name: Upload to Dockerhub
 
 jobs:
   deploy:
     name: Publish
-    runs-on: ubuntu-latest
+    runs-on: macos-11
 
     steps:
     - name: Checkout
       uses: actions/checkout@v2
+    
+    - uses: actions/setup-elixir@v1
+      with:
+          otp-version: '24'
+          elixir-version: '1.12.3'
+    
+    - run: mix deps.get
+    - run: mix test
+    - run: MIX_ENV=prod mix release
       
-    - name: Get release version
-      id: get_version
-      run: echo ::set-output name=RELEASE_VERSION::$(echo ${GITHUB_REF:10})
-      
-    - name: Publish to Registry
-      uses: elgohr/Publish-Docker-Github-Action@780fbae7f45909d95e3b9ed532045d29346735f5
+
+    - name: Build Release
+      uses: svenstaro/upload-release-action@v2
       with:
         name: hansonkd/crisscross
-        username: ${{ secrets.DOCKER_HUB_USERNAME }}
-        password: ${{ secrets.DOCKER_HUB_SECRET }}
-        tags: "latest,${{ steps.get_version.outputs.RELEASE_VERSION }}"
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: target/release/${{ matrix.artifact_name }}
+        asset_name: ${{ matrix.asset_name }}
+        tag: ${{ github.ref }}

@@ -5,6 +5,7 @@ defmodule CrissCross.MixProject do
     [
       app: :criss_cross,
       version: "0.1.0",
+      releases: releases(),
       elixir: "~> 1.12",
       start_permanent: Mix.env() == :prod,
       deps: deps()
@@ -16,6 +17,21 @@ defmodule CrissCross.MixProject do
     [
       mod: {CrissCross.Application, []},
       extra_applications: [:logger, :crypto, :inets]
+    ]
+  end
+
+  def releases do
+    [
+      criss_cross: [
+        steps: [:assemble, &Burrito.wrap/1],
+        burrito: [
+          targets: [
+            macos: [os: :darwin, cpu: :x86_64],
+            linux: [os: :linux, cpu: :x86_64],
+            windows: [os: :windows, cpu: :x86_64]
+          ]
+        ]
+      ]
     ]
   end
 
@@ -35,12 +51,13 @@ defmodule CrissCross.MixProject do
       # {:ex_p2p, path: "../ex_p2p"},
       {:criss_cross_dht,
        github: "SoCal-Software-Labs/CrissCrossDHT",
-       ref: "3490e0813786976c1bc9d42f8e0183ca3c762bc5"},
+       ref: "fd6bf4044938603efc4e4fe3399e91637dc50ebe"},
       # {:criss_cross_dht, path: "../MlDHT"},
       {:rustler, "~> 0.23.0"},
       {:yaml_elixir, "~> 2.8"},
       {:sorted_set_kv, "~> 0.1.2"},
-      {:hammer, "~> 6.0"}
+      {:hammer, "~> 6.0"},
+      {:burrito, github: "burrito-elixir/burrito"}
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]

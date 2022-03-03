@@ -12,12 +12,10 @@ defmodule CrissCross.Application do
 
   @default_udp 22222
 
-  @default_bootstrap "quic://5owBehSAPoSLBgKdeMZR9X9tKsgAqBHWrLxif6ZP7vrJ2BmUYbKn7mhB8Z@207.246.104.131:22222"
+  @default_bootstrap "quic://5owBehSAPoSLBgKdeMZR9X9tKsgAqBHWrLxif6ZP7vrJ2BmUYbKn7mhB8Z@bootstrap.cxn.cx:22222"
 
   def convert_ip(var, default) do
     ip_to_bind = System.get_env(var, default)
-
-    IO.inspect(ip_to_bind)
 
     {:ok, addr} = :inet.parse_address(String.to_charlist(ip_to_bind))
 
@@ -136,8 +134,10 @@ defmodule CrissCross.Application do
 
     bootstrap_nodes_for_endpoint =
       bootstrap_nodes
-      |> Enum.map(fn %{host: ip, port: port, node_id: node_id} -> {node_id, ip, port} end)
-      |> Utils.resolve_hostnames(:ipv6)
+      |> Enum.map(fn %{host: ip, port: port, node_id: node_id} ->
+        {node_id, ip, port}
+      end)
+      |> Utils.resolve_hostnames(:inet6)
       |> Enum.map(fn {_, host, port} -> Utils.tuple_to_ipstr(host, port) end)
 
     {storage, make_make_store} = get_backends(storage_backend)
@@ -256,6 +256,7 @@ defmodule CrissCross.Application do
     ]
 
     Logger.info("Binding on #{ip_to_bind}")
+    Logger.info("Trying to contact bootstrap nodes...")
 
     ## Start the main supervisor
     opts = [strategy: :one_for_one, name: CrissCross.Supervisor]
