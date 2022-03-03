@@ -29,15 +29,22 @@ jobs:
           rust-version: stable
 
     - run: mix deps.get
-    - run: mix test
     - run: MIX_ENV=prod mix release
       
+    - name: Build Release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        name: hansonkd/crisscross
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: burrito_out/criss_cross_linux
+        asset_name: crisscross_linux
+        tag: ${{ github.ref }}
 
     - name: Build Release
       uses: svenstaro/upload-release-action@v2
       with:
         name: hansonkd/crisscross
         repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: target/release/${{ matrix.artifact_name }}
-        asset_name: ${{ matrix.asset_name }}
+        file: burrito_out/criss_cross_macos
+        asset_name: crisscross_macos
         tag: ${{ github.ref }}
