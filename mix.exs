@@ -55,7 +55,7 @@ defmodule CrissCross.MixProject do
       # {:criss_cross_dht, path: "../MlDHT"},
       {:rustler, "~> 0.23.0"},
       {:yaml_elixir, "~> 2.8"},
-      {:sorted_set_kv, "~> 0.1.2"},
+      {:sorted_set_kv, "~> 0.1.3"},
       {:hammer, "~> 6.0"},
       {:burrito, github: "burrito-elixir/burrito"}
       # {:dep_from_hexpm, "~> 0.3.0"},

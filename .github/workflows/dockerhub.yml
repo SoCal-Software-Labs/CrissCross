@@ -20,6 +20,9 @@ jobs:
       run: |
           brew update
           brew install elixir
+          brew install zig
+          brew install gzip
+          brew install p7zip
           mix local.rebar --force
           mix local.hex --force
 
