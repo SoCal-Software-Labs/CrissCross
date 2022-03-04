@@ -23,7 +23,8 @@ jobs:
         path: |
           ~/Library/Caches/Homebrew/*
           ~/Library/Caches/Homebrew/downloads/*
-        key: ${{ runner.os }}-brew
+          ~/.mix
+        key: ${{ runner.os }}-brew-1
     
     - name: Cache Mix
       id: cache-mix
@@ -32,6 +33,7 @@ jobs:
         path: |
           deps/*
           _build/*
+
         key: ${{ runner.os }}-mix-${{ hashFiles('mix.exs') }}
 
     - name: Install Elixir
