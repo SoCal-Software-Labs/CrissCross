@@ -280,10 +280,10 @@ Take the `Name` value from `./keys/my_tunnel.yaml` and distribute it to the clie
 import crisscross as cx
 
 
-name = cx.read_var("2UPgX4LiLDzNbY4v6PRKN21MHVFDY4kLetsCbY4KXBEPMrx") # Replace with name from ./keys/my_tunnel.yaml
+name = cx.read_var("2UPhgpFMhNyquU1A2qNAr6GHMZgauXERrE84iU3jF1q8XBG") # Replace with name from ./keys/my_tunnel.yaml
 cluster = cx.read_var("^defaultcluster")
 client = cx.CrissCross()
-client.tunnel_open(cluster, name, "SECRETPASS", 7777, "www.httpbin.org", 80)
+client.tunnel_open(cluster, name, "SECRETPASS", 8888, "www.httpbin.org", 80)
 ```
 
 Now your client will automatically find the server and you can access `localhost:7777` on the client to reach `www.httpbin.org:80` from the server instance.

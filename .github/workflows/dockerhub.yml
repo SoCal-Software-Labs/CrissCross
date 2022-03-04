@@ -33,12 +33,13 @@ jobs:
         path: |
           deps/*
           _build/*
-
-        key: ${{ runner.os }}-mix-${{ hashFiles('mix.exs') }}
+        key: ${{ runner.os }}-mix
+        # key: ${{ runner.os }}-mix-${{ hashFiles('mix.exs') }}
 
     - name: Install Elixir
       # if: steps.cache-brew.outputs.cache-hit != 'true'
       run: |
+          export HOMEBREW_NO_INSTALL_CLEANUP=1
           brew update
           brew install elixir
           brew install zig
