@@ -86,7 +86,7 @@ jobs:
           sudo apt-get install p7zip gzip openssl libssl-dev
 
 
-    - uses: actions/setup-elixir@v1
+    - uses: erlef/setup-beam@v1
       with:
           otp-version: '24.2'
           elixir-version: '1.12.3'
