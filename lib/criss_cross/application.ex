@@ -254,7 +254,7 @@ defmodule CrissCross.Application do
       {CrissCrossDHT.Supervisor, node_id: node_id, worker_name: @process_name, config: dht_config}
     ]
 
-    Logger.info("Binding on #{ip_to_bind}")
+    Logger.info("Binding on [#{ip_to_bind}]:#{external_port}")
     Logger.info("Trying to contact bootstrap nodes...")
 
     ## Start the main supervisor

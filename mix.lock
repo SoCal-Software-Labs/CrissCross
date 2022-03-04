@@ -4,7 +4,7 @@
   "burrito": {:git, "https://github.com/SoCal-Software-Labs/burrito.git", "a5a418467f17007175333f54082c145287f5cb3e", [ref: "a5a418467f17007175333f54082c145287f5cb3e"]},
   "cachex": {:hex, :cachex, "3.4.0", "868b2959ea4aeb328c6b60ff66c8d5123c083466ad3c33d3d8b5f142e13101fb", [:mix], [{:eternal, "~> 1.2", [hex: :eternal, repo: "hexpm", optional: false]}, {:jumper, "~> 1.0", [hex: :jumper, repo: "hexpm", optional: false]}, {:sleeplocks, "~> 1.1", [hex: :sleeplocks, repo: "hexpm", optional: false]}, {:unsafe, "~> 1.0", [hex: :unsafe, repo: "hexpm", optional: false]}], "hexpm", "370123b1ab4fba4d2965fb18f87fd758325709787c8c5fce35b3fe80645ccbe5"},
   "castore": {:hex, :castore, "0.1.15", "dbb300827d5a3ec48f396ca0b77ad47058578927e9ebe792abd99fcbc3324326", [:mix], [], "hexpm", "c69379b907673c7e6eb229f09a0a09b60bb27cfb9625bcb82ea4c04ba82a8442"},
-  "criss_cross_dht": {:git, "https://github.com/SoCal-Software-Labs/CrissCrossDHT.git", "93c7def5574504ee3ada65c5264032c8b75a5b45", [ref: "93c7def5574504ee3ada65c5264032c8b75a5b45"]},
+  "criss_cross_dht": {:git, "https://github.com/SoCal-Software-Labs/CrissCrossDHT.git", "6da723cb04225718948a8e15ddfa50e9603a4c2e", [ref: "6da723cb04225718948a8e15ddfa50e9603a4c2e"]},
   "cubdb": {:git, "https://github.com/SoCal-Software-Labs/cubdb.git", "20ee343ad1abedc6a3c66df152983e6530840ba9", []},
   "deep_merge": {:hex, :deep_merge, "1.0.0", "b4aa1a0d1acac393bdf38b2291af38cb1d4a52806cf7a4906f718e1feb5ee961", [:mix], [], "hexpm", "ce708e5f094b9cd4e8f2be4f00d2f4250c4095be93f8cd6d018c753894885430"},
   "eternal": {:hex, :eternal, "1.2.2", "d1641c86368de99375b98d183042dd6c2b234262b8d08dfd72b9eeaafc2a1abd", [:mix], [], "hexpm", "2c9fe32b9c3726703ba5e1d43a1d255a4f3f2d8f8f9bc19f094c7cb1a7a9e782"},

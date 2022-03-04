@@ -67,19 +67,30 @@ CrissCross was designed to build applications. As such it uses the Redis Protoco
 
 # Tour
 
-### Docker script
+### Binary Executable
 
-CrissCross comes distributed as a script which launches a docker container for the CrissCross server.
+While you can compile and run the repository, it is recommended you use the lastest binary releases.
+
+
+### Linux
 
 ```bash
-curl https://raw.githubusercontent.com/SoCal-Software-Labs/CrissCross/main/launch_crisscross_server.sh -o ./launch_criss_cross.sh
-chmod +x ./launch_criss_cross.sh
+curl https://github.com/SoCal-Software-Labs/CrissCross/releases/latest/download/crisscross_linux -o ./crisscross_server
+chmod +x ./crisscross_server
+```
+
+
+### MacOS 11
+
+```bash
+curl https://github.com/SoCal-Software-Labs/CrissCross/releases/latest/download/crisscross_macos -o ./crisscross_server
+chmod +x ./crisscross_server
 ```
 
 And finally execute the command to launch the database and server to connect to the overlay. By default CrissCross will store data in `./data` and will look for cluster configurations in `./clusters` of the directory you launch the script in.
 
 ```bash
-./launch_criss_cross.sh
+./crisscross_server
 ```
 
 Install the command-line client with pip:
@@ -95,7 +106,7 @@ With CrissCross you insert data into a hash and get a new hash in return. To sta
 
 #### Bash
 
-```bash 
+```console 
 # In bash you get the Base58 Representation
 $ crisscross put "" "hello" "world"
 2UPodno55iocZqNGGav5MXi6LsFFqqzDvgQm5A9Qr3pebns
@@ -122,7 +133,7 @@ Store arbitrary data... tuples, lists, dictionaries, booleans, integers, floats 
 
 A cluster consists of 4 immutable pieces of information. There is a PrivateKey which gives the holder permission to ask the cluster to store data. There is the public key that cluster members use to verify the private key. A Cypher is used to encrypt all cluster DHT traffic over the wire. Think of a Cypher as the password to talk to the cluster. Finally there is the Name, which is a Hash of the Cypher and Public keys combined. A user configurable MaxTTL can be set per node and is not cluster wide.
 
-```bash
+```console
 $ crisscross cluster
 Name:       2UPkZmzFeeux8C5kVgVXRWMomgZfdHZ4yv2SqndCLrM4PNX
 Cypher:     6NDdi5uVtPszZMHTYxt3n7rSiovLuMF1fQJtioz79ND2
@@ -133,13 +144,13 @@ MaxTTL:     86400000
 
 Put this into a yaml file inside a `clusters` folder
 
-```bash
+```console
 $ crisscross cluster > clusters/my_cluster.yaml
 ```
 
 Restart the node so that it picks up the configuration. Now you will be able to announce data to your new cluster. Starting a variable with `*` causes the system to load a yaml file and replace the value in your command.
 
-```bash
+```console
 # Reference the cluster name 
 $ crisscross announce *clusters/my_cluster.yaml#Name 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
 True
@@ -152,13 +163,13 @@ You can distribute this YAML file to anybody you wish to join the cluster. Be ca
 
 Once you have a hash, you can share it on the network and others can clone it from you. `^defaultcluster` is a special string that is replaced with the name of the default bootstrap overlay cluster
 
-```bash
+```console
 # On one machine
 $ crisscross announce ^defaultcluster 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
 True
 ```
 
-```bash
+```console
 # On other machine query the tree without fully downloading it
 $ crisscross remote_get ^defaultcluster 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M "hello2"
 "world2"
@@ -185,7 +196,7 @@ MaxTTL:          86400000
 MaxAcceptedSize: 10000000 # ~10mb
 ```
 
-```bash
+```console
 # Push a tree onto the cluster 
 $ crisscross push *clusters/my_cluster.yaml#Name 2UPe9oukYYpPvjGthmyazd1CtTQwddc1DNRxWykdxaXuE6M
 True
@@ -205,7 +216,7 @@ You can disable this feature by destroying the PrivateKey after generating the c
 
 Generate a new keypair to announce the service under.
 
-```bash
+```console
 crisscross keypair > keys/my_key.yaml
 ```
 
@@ -253,37 +264,40 @@ TCP tunnelling allows you to connect to a remote service using another computer.
 
 Generate a new keypair to announce the tunnel under.
 
-```bash
+```console
 crisscross keypair > ./keys/my_tunnel.yaml
 ```
 
-On the server instance, set the environment variable `TUNNEL_TOKEN` of your CrissCross server to a secret value and restart your instance. Announce a tunnel under a private key pair and enable what hosts and ports you want to allow access using the `TUNNEL_TOKEN`. A configurable passphrase (in this case `SECRETPASS`) makes sure only the clients allow can connect.
+On the server instance, set the environment variable `TUNNEL_TOKEN` of your CrissCross server (In this example 123) to a secret value and restart your instance. Announce a tunnel under a private key pair and enable what hosts and ports you want to allow access using the `TUNNEL_TOKEN`. A configurable passphrase (in this case `SECRETPASS`) makes sure only the clients allow can connect.
 
-```python
-import os
-import crisscross as cx
+```console
+TUNNEL_TOKEN=123 ./crisscross_server
+```
 
-
-token = "123"
-name = cx.read_var("*./keys/my_tunnel.yaml#Name")
-cluster = cx.read_var("^defaultcluster")
-client = cx.CrissCross()
-# Announce the service so they can find us
-client.job_announce(cluster, name)
-# Only allow access to www.httpbin.org
-client.tunnel_allow(token, cluster, name, "SECRETPASS", "www.httpbin.org", 80)
+```console
+$ crisscross tunnel_announce ^defaultcluster "*./keys/my_tunnel.yaml#Name"
+True
+$ crisscross tunnel_allow \
+    "123" \
+    "^defaultcluster" \
+    "*./keys/my_tunnel.yaml#Name" \
+    "SECRETPASS" \
+    "www.httpbin.org" \
+    80
+True
 ```
 
 Take the `Name` value from `./keys/my_tunnel.yaml` and distribute it to the client. On the client instance, map your local port (in this example: 7777) to the destination and port on any node advertising the key pair name on the cluster.
 
-```python
-import crisscross as cx
-
-
-name = cx.read_var("2UPhgpFMhNyquU1A2qNAr6GHMZgauXERrE84iU3jF1q8XBG") # Replace with name from ./keys/my_tunnel.yaml
-cluster = cx.read_var("^defaultcluster")
-client = cx.CrissCross()
-client.tunnel_open(cluster, name, "SECRETPASS", 8888, "www.httpbin.org", 80)
+```console
+$ crisscross tunnel_open \
+    "^defaultcluster" \
+    "*./keys/my_tunnel.yaml#Name" \
+    "SECRETPASS" \
+    7777 \
+    "www.httpbin.org" \
+    80
+True
 ```
 
 Now your client will automatically find the server and you can access `localhost:7777` on the client to reach `www.httpbin.org:80` from the server instance.
@@ -298,14 +312,14 @@ For more usage see the [Python client example](https://github.com/SoCal-Software
 
 Files are like any other tree, except they have integer keys and binary values. The keys represent the offset of the binary value in the original file. The python client and CLI provide a way to work with files:
 
-```bash
+```console
 $ crisscross upload Readme.md
 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj
 ```
 
 Once you have a hash, a file behaves like a normal tree, you can query its keys to get specific chunks of the file, announce it, download it, and distribute it.
 
-```bash
+```console
 # Show file contents:
 $ crisscross cat 2UPoQEnEf91mgvazZPBruCwNwTHsytfRQUbjvSVmQY3bhCj
 # Download file:
@@ -322,7 +336,7 @@ $ crisscross remote_persist --num=10 ^defaultcluster 2UPoQEnEf91mgvazZPBruCwNwTH
 
 Directories work in the same way. Directories are trees with string keys and embedded trees as values. The python client and CLI provide methods for manipulating and accessing directories
 
-```bash
+```console
 $ crisscross upload_dir ./examples
 2UPqTuCGzngW5hR9BtuFaMdCJu2PJD1ygqfvbicFq3eenaq
 # Add a file to an existing directory
@@ -330,7 +344,7 @@ $ crisscross upload_dir ./more-examples --tree=2UPqTuCGzngW5hR9BtuFaMdCJu2PJD1yg
 2UPmgchaP1Z2Yr2YUQtG1eMQqbNBt1qtEtK93RutWdvQDny
 ```
 
-```bash
+```console
 $ crisscross download_dir 2UPqTuCGzngW5hR9BtuFaMdCJu2PJD1ygqfvbicFq3eenaq examples-copy
 # List a directory's contents:
 $ crisscross ls 2UPqTuCGzngW5hR9BtuFaMdCJu2PJD1ygqfvbicFq3eenaq
