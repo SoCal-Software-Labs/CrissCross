@@ -55,7 +55,6 @@ jobs:
 
     - run: mix deps.get
     - name: Compile Elixir
-      if: steps.cache-mix.outputs.cache-hit != 'true'
       run: MIX_ENV=prod mix compile
     - run: MIX_ENV=prod mix release
 
