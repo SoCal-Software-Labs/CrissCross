@@ -37,7 +37,7 @@ jobs:
         key: ${{ runner.os }}-mix-${{ hashFiles('mix.exs') }}
 
     - name: Install Elixir
-      if: steps.cache-brew.outputs.cache-hit != 'true'
+      # if: steps.cache-brew.outputs.cache-hit != 'true'
       run: |
           brew update
           brew install elixir
@@ -57,7 +57,7 @@ jobs:
     - name: Compile Elixir
       if: steps.cache-mix.outputs.cache-hit != 'true'
       run: MIX_ENV=prod mix compile
-    # - run: MIX_ENV=prod mix release
+    - run: MIX_ENV=prod mix release
 
     # - name: Build Release
     #   uses: svenstaro/upload-release-action@v2
