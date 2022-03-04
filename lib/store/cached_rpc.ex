@@ -79,9 +79,9 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
       Utils.MissingHashError ->
         PeerGroup.get_conns(conns, 5_000)
         |> Enum.shuffle()
-        |> Enum.filter(fn conn ->
-          Cachex.get(:blacklisted_ips, tuple(conn)) == {:ok, nil}
-        end)
+        # |> Enum.filter(fn conn ->
+        #   Cachex.get(:blacklisted_ips, tuple(conn)) == {:ok, nil}
+        # end)
         |> Enum.reduce_while(nil, fn conn, acc ->
           case do_get(conn, cluster, location) do
             {:ok, real_value} when is_binary(real_value) ->

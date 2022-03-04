@@ -57,7 +57,8 @@ defmodule CrissCross.MixProject do
       {:yaml_elixir, "~> 2.8"},
       {:sorted_set_kv, "~> 0.1.3"},
       {:hammer, "~> 6.0"},
-      {:burrito, github: "burrito-elixir/burrito"}
+      {:burrito,
+       github: "SoCal-Software-Labs/burrito", ref: "a5a418467f17007175333f54082c145287f5cb3e"}
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]

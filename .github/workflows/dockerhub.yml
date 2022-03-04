@@ -58,20 +58,20 @@ jobs:
       run: MIX_ENV=prod mix compile
     - run: MIX_ENV=prod sudo mix release
 
-    - name: Build Release
-      uses: svenstaro/upload-release-action@v2
-      with:
-        name: hansonkd/crisscross
-        repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: burrito_out/criss_cross_linux
-        asset_name: crisscross_linux
-        tag: ${{ github.ref }}
+    # - name: Build Release
+    #   uses: svenstaro/upload-release-action@v2
+    #   with:
+    #     name: hansonkd/crisscross
+    #     repo_token: ${{ secrets.GITHUB_TOKEN }}
+    #     file: burrito_out/criss_cross_linux
+    #     asset_name: crisscross_linux
+    #     tag: ${{ github.ref }}
 
-    - name: Build Release
-      uses: svenstaro/upload-release-action@v2
-      with:
-        name: hansonkd/crisscross
-        repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: burrito_out/criss_cross_macos
-        asset_name: crisscross_macos
-        tag: ${{ github.ref }}
+    # - name: Build Release
+    #   uses: svenstaro/upload-release-action@v2
+    #   with:
+    #     name: hansonkd/crisscross
+    #     repo_token: ${{ secrets.GITHUB_TOKEN }}
+    #     file: burrito_out/criss_cross_macos
+    #     asset_name: crisscross_macos
+    #     tag: ${{ github.ref }}
