@@ -82,7 +82,7 @@ jobs:
     - name: Install Deps
       # if: steps.cache-brew.outputs.cache-hit != 'true'
       run: |
-          sudo snap install --beta zig
+          sudo snap install --beta --classic zig
           sudo apt-get install p7zip gzip openssl libssl-dev
 
 
