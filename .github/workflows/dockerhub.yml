@@ -56,9 +56,7 @@ jobs:
 
 
     - run: mix deps.get
-    - name: Compile Elixir
-      run: MIX_ENV=prod mix compile
-    - run: BURRITO_TARGET=macos MIX_ENV=prod sudo mix release
+    - run: MIX_ENV=prod BURRITO_TARGET=macos sudo mix release --overwrite
 
     - name: Build Release
       uses: svenstaro/upload-release-action@v2
@@ -76,7 +74,6 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v2
   
-    
     - name: Cache Mix
       id: cache-mix
       uses: actions/cache@v2
