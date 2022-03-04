@@ -127,8 +127,7 @@ defmodule CrissCross.Application do
 
     name_dir = System.get_env("KEY_DIR", "./keys") |> String.trim_trailing("?") |> Path.expand()
 
-    # {ip, external_ip} = convert_ip("EXTERNAL_IP", "127.0.0.1")
-    {ip_to_bind, bind_ip} = convert_ip("BIND_IP", "127.0.0.1")
+    {ip_to_bind, bind_ip} = convert_ip("BIND_IP", "::0")
 
     bootstrap_nodes = bootstrap_nodes()
 
