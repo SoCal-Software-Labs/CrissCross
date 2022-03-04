@@ -59,7 +59,15 @@ jobs:
   #   - name: Compile Elixir
   #     run: MIX_ENV=prod mix compile
   #   - run: BURRITO_TARGET=macos MIX_ENV=prod sudo mix release
-  
+
+    # - name: Build Release
+    #   uses: svenstaro/upload-release-action@v2
+    #   with:
+    #     name: SoCal-Software-Labs/CrissCross
+    #     repo_token: ${{ secrets.GITHUB_TOKEN }}
+    #     file: burrito_out/crisscross_macos
+    #     asset_name: crisscross_macos
+    #     tag: ${{ github.ref }}
   build_linux:
     name: Publish
     runs-on: ubuntu-20.04
@@ -100,7 +108,7 @@ jobs:
 
     - run: mix deps.get
     - name: Compile Elixir
-      run: BURRITO_TARGET=linux MIX_ENV=prod mix release
+      run: BURRITO_TARGET=linux MIX_ENV=prod mix release --overwrite
 
     - name: Build Release
       uses: svenstaro/upload-release-action@v2
@@ -111,11 +119,3 @@ jobs:
         asset_name: crisscross_linux
         tag: ${{ github.ref }}
 
-    # - name: Build Release
-    #   uses: svenstaro/upload-release-action@v2
-    #   with:
-    #     name: SoCal-Software-Labs/CrissCross
-    #     repo_token: ${{ secrets.GITHUB_TOKEN }}
-    #     file: burrito_out/crisscross_macos
-    #     asset_name: crisscross_macos
-    #     tag: ${{ github.ref }}
