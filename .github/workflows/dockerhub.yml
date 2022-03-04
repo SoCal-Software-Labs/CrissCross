@@ -8,23 +8,66 @@ on:
 name: Upload to Dockerhub
 
 jobs:
-  deploy:
+  # build_macos:
+  #   name: Publish
+  #   runs-on: macos-11
+
+  #   steps:
+  #   - name: Checkout
+  #     uses: actions/checkout@v2
+    
+  #   - name: Cache Brew
+  #     id: cache-brew
+  #     uses: actions/cache@v2
+  #     with:
+  #       path: |
+  #         ~/Library/Caches/Homebrew/*
+  #         ~/Library/Caches/Homebrew/downloads/*
+  #         ~/.mix
+  #       key: ${{ runner.os }}-brew-1
+    
+  #   - name: Cache Mix
+  #     id: cache-mix
+  #     uses: actions/cache@v2
+  #     with:
+  #       path: |
+  #         deps/*
+  #         _build/*
+  #       key: ${{ runner.os }}-mix
+  #       # key: ${{ runner.os }}-mix-${{ hashFiles('mix.exs') }}
+
+  #   - name: Install Elixir
+  #     # if: steps.cache-brew.outputs.cache-hit != 'true'
+  #     run: |
+  #         export HOMEBREW_NO_INSTALL_CLEANUP=1
+  #         export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
+  #         brew update
+  #         brew install elixir
+  #         brew install zig
+  #         brew install gzip
+  #         brew install p7zip
+  #         mix local.rebar --force
+  #         mix local.hex --force
+
+  #   - name: Setup | Rust
+  #     uses: ATiltedTree/setup-rust@v1
+  #     with:
+  #         rust-version: stable
+
+
+  #   - run: mix deps.get
+  #   - name: Compile Elixir
+  #     run: MIX_ENV=prod mix compile
+  #   - run: BURRITO_TARGET=macos MIX_ENV=prod sudo mix release
+  
+  build_linux:
     name: Publish
-    runs-on: macos-11
+    runs-on: ubuntu-20.04
 
     steps:
     - name: Checkout
       uses: actions/checkout@v2
-    
-    - name: Cache Brew
-      id: cache-brew
-      uses: actions/cache@v2
-      with:
-        path: |
-          ~/Library/Caches/Homebrew/*
-          ~/Library/Caches/Homebrew/downloads/*
-          ~/.mix
-        key: ${{ runner.os }}-brew-1
+  
     
     - name: Cache Mix
       id: cache-mix
@@ -36,15 +79,16 @@ jobs:
         key: ${{ runner.os }}-mix
         # key: ${{ runner.os }}-mix-${{ hashFiles('mix.exs') }}
 
-    - name: Install Elixir
+    - uses: actions/setup-elixir@v1
+        with:
+          otp-version: '24.2'
+          elixir-version: '1.12.3'
+
+    - name: Install Deps
       # if: steps.cache-brew.outputs.cache-hit != 'true'
       run: |
-          export HOMEBREW_NO_INSTALL_CLEANUP=1
-          brew update
-          brew install elixir
-          brew install zig
-          brew install gzip
-          brew install p7zip
+          snap install zig
+          sudo apt-get install p7zip gzip
           mix local.rebar --force
           mix local.hex --force
 
@@ -57,7 +101,7 @@ jobs:
     - run: mix deps.get
     - name: Compile Elixir
       run: MIX_ENV=prod mix compile
-    - run: MIX_ENV=prod sudo mix release
+    - run: BURRITO_TARGET=linux MIX_ENV=prod sudo mix release
 
     # - name: Build Release
     #   uses: svenstaro/upload-release-action@v2
