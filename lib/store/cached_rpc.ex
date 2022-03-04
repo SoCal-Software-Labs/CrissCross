@@ -84,23 +84,15 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
         end)
         |> Enum.reduce_while(nil, fn conn, acc ->
           case do_get(conn, cluster, location) do
-            {:ok, value} when is_binary(value) ->
-              case do_decrypt(conn, value) do
-                real_value when is_binary(real_value) ->
-                  if hash(real_value) == hash_loc do
-                    v = deserialize_bert(real_value)
-                    put_node(rpc, v)
-                    {:halt, v}
-                  else
-                    Cachex.put!(:blacklisted_ips, tuple(conn), true)
-                    Logger.error("Invalid Content Hash")
-                    {:cont, acc}
-                  end
-
-                _ = e ->
-                  Cachex.put!(:blacklisted_ips, tuple(conn), true)
-                  Logger.error("Error with GET decrypt: #{inspect(e)}")
-                  {:cont, acc}
+            {:ok, real_value} when is_binary(real_value) ->
+              if hash(real_value) == hash_loc do
+                v = deserialize_bert(real_value)
+                put_node(rpc, v)
+                {:halt, v}
+              else
+                Cachex.put!(:blacklisted_ips, tuple(conn), true)
+                Logger.error("Invalid Content Hash")
+                {:cont, acc}
               end
 
             {:ok, nil} ->
@@ -187,7 +179,7 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
     end
   end
 
-  def do_decrypt({:unencrypted, _conn, _}, msg) do
+  def do_decrypt({:quic, _conn, _}, msg) do
     msg
   end
 
