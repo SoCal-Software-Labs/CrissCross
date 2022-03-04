@@ -195,11 +195,7 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
     decrypt(msg, secret)
   end
 
-  def tuple({:unencrypted, _, t}) do
-    t
-  end
-
-  def tuple({:encrypted, _, _, t}) do
+  def tuple({:quic, _, _, t}) do
     t
   end
 end

@@ -1,10 +1,10 @@
 %{
   "b58": {:hex, :b58, "1.0.2", "d758f42d89fbe84052f18b2f310bed2a8c8c5b38dd0af86970026974cc7daeda", [:mix], [], "hexpm", "148e299e2753eae222b13f399f461a0c4910fed608b8723fca3c33d1d4f82c17"},
   "benchee": {:hex, :benchee, "1.0.1", "66b211f9bfd84bd97e6d1beaddf8fc2312aaabe192f776e8931cb0c16f53a521", [:mix], [{:deep_merge, "~> 1.0", [hex: :deep_merge, repo: "hexpm", optional: false]}], "hexpm", "3ad58ae787e9c7c94dd7ceda3b587ec2c64604563e049b2a0e8baafae832addb"},
-  "burrito": {:git, "https://github.com/SoCal-Software-Labs/burrito.git", "22d2bae44983b34eb1413806da0b75372c25fae7", [ref: "22d2bae44983b34eb1413806da0b75372c25fae7"]},
+  "burrito": {:git, "https://github.com/burrito-elixir/burrito.git", "e21433088c7bccc1f9628d9b5518ecef953d575c", []},
   "cachex": {:hex, :cachex, "3.4.0", "868b2959ea4aeb328c6b60ff66c8d5123c083466ad3c33d3d8b5f142e13101fb", [:mix], [{:eternal, "~> 1.2", [hex: :eternal, repo: "hexpm", optional: false]}, {:jumper, "~> 1.0", [hex: :jumper, repo: "hexpm", optional: false]}, {:sleeplocks, "~> 1.1", [hex: :sleeplocks, repo: "hexpm", optional: false]}, {:unsafe, "~> 1.0", [hex: :unsafe, repo: "hexpm", optional: false]}], "hexpm", "370123b1ab4fba4d2965fb18f87fd758325709787c8c5fce35b3fe80645ccbe5"},
   "castore": {:hex, :castore, "0.1.15", "dbb300827d5a3ec48f396ca0b77ad47058578927e9ebe792abd99fcbc3324326", [:mix], [], "hexpm", "c69379b907673c7e6eb229f09a0a09b60bb27cfb9625bcb82ea4c04ba82a8442"},
-  "criss_cross_dht": {:git, "https://github.com/SoCal-Software-Labs/CrissCrossDHT.git", "7aa9cd731348c1cd397a3580158333e9f87ccd76", [ref: "7aa9cd731348c1cd397a3580158333e9f87ccd76"]},
+  "criss_cross_dht": {:git, "https://github.com/SoCal-Software-Labs/CrissCrossDHT.git", "93c7def5574504ee3ada65c5264032c8b75a5b45", [ref: "93c7def5574504ee3ada65c5264032c8b75a5b45"]},
   "cubdb": {:git, "https://github.com/SoCal-Software-Labs/cubdb.git", "20ee343ad1abedc6a3c66df152983e6530840ba9", []},
   "deep_merge": {:hex, :deep_merge, "1.0.0", "b4aa1a0d1acac393bdf38b2291af38cb1d4a52806cf7a4906f718e1feb5ee961", [:mix], [], "hexpm", "ce708e5f094b9cd4e8f2be4f00d2f4250c4095be93f8cd6d018c753894885430"},
   "eternal": {:hex, :eternal, "1.2.2", "d1641c86368de99375b98d183042dd6c2b234262b8d08dfd72b9eeaafc2a1abd", [:mix], [], "hexpm", "2c9fe32b9c3726703ba5e1d43a1d255a4f3f2d8f8f9bc19f094c7cb1a7a9e782"},
