@@ -102,19 +102,19 @@ jobs:
     - name: Compile Elixir
       run: BURRITO_TARGET=linux MIX_ENV=prod mix release
 
-    # - name: Build Release
-    #   uses: svenstaro/upload-release-action@v2
-    #   with:
-    #     name: hansonkd/crisscross
-    #     repo_token: ${{ secrets.GITHUB_TOKEN }}
-    #     file: burrito_out/crisscross_linux
-    #     asset_name: crisscross_linux
-    #     tag: ${{ github.ref }}
+    - name: Build Release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        name: SoCal-Software-Labs/CrissCross
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: burrito_out/crisscross_linux
+        asset_name: crisscross_linux
+        tag: ${{ github.ref }}
 
     # - name: Build Release
     #   uses: svenstaro/upload-release-action@v2
     #   with:
-    #     name: hansonkd/crisscross
+    #     name: SoCal-Software-Labs/CrissCross
     #     repo_token: ${{ secrets.GITHUB_TOKEN }}
     #     file: burrito_out/crisscross_macos
     #     asset_name: crisscross_macos
