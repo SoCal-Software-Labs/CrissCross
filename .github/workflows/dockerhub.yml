@@ -1,9 +1,9 @@
 on:
-  push:
-    branches:
-      - "*"
-  # release:
-  #   types: [created]
+  # push:
+  #   branches:
+  #     - "*"
+  release:
+    types: [created]
 
 name: Upload to Dockerhub
 
