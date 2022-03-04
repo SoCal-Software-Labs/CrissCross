@@ -38,3 +38,5 @@ iron_cub-*.tar
 /doc/
 
 /burrito_out/
+
+/burrito_build/

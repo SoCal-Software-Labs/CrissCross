@@ -137,7 +137,7 @@ defmodule CrissCross.GlueSql do
   end
 
   use Rustler,
-    otp_app: :criss_cross,
+    otp_app: :crisscross,
     crate: :crisscross_gluesql
 
   def start_sql(_arg1, _arg2), do: :erlang.nif_error(:nif_not_loaded)

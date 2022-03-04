@@ -3,7 +3,7 @@ defmodule CrissCross.MixProject do
 
   def project do
     [
-      app: :criss_cross,
+      app: :crisscross,
       version: "0.1.0",
       releases: releases(),
       elixir: "~> 1.12",
@@ -22,7 +22,7 @@ defmodule CrissCross.MixProject do
 
   def releases do
     [
-      criss_cross: [
+      crisscross: [
         steps: [:assemble, &Burrito.wrap/1],
         burrito: [
           targets: [
@@ -57,7 +57,8 @@ defmodule CrissCross.MixProject do
       {:yaml_elixir, "~> 2.8"},
       {:sorted_set_kv, "~> 0.1.3"},
       {:hammer, "~> 6.0"},
-      {:burrito, github: "burrito-elixir/burrito"}
+      {:burrito,
+       github: "SoCal-Software-Labs/burrito", ref: "b1f4f0485473456af99fef9fcf6e2cc8a5be90c5"}
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]
