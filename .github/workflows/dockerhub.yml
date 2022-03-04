@@ -1,7 +1,7 @@
 on:
-  # push:
-  #   branches:
-  #     - "*"
+  push:
+    branches:
+      - "*"
   release:
     types: [created]
 
@@ -16,7 +16,17 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v2
     
+    - name: Cache Primes
+      id: cache-brew
+      uses: actions/cache@v2
+      with:
+        path: |
+          ~/Library/Caches/Homebrew/*
+          ~/Library/Caches/Homebrew/downloads/*
+        key: ${{ runner.os }}-brew
+
     - name: Install Elixir
+      if: steps.cache-brew.outputs.cache-hit != 'true'
       run: |
           brew update
           brew install elixir
@@ -34,20 +44,20 @@ jobs:
     - run: mix deps.get
     - run: MIX_ENV=prod mix release
       
-    - name: Build Release
-      uses: svenstaro/upload-release-action@v2
-      with:
-        name: hansonkd/crisscross
-        repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: burrito_out/criss_cross_linux
-        asset_name: crisscross_linux
-        tag: ${{ github.ref }}
+    # - name: Build Release
+    #   uses: svenstaro/upload-release-action@v2
+    #   with:
+    #     name: hansonkd/crisscross
+    #     repo_token: ${{ secrets.GITHUB_TOKEN }}
+    #     file: burrito_out/criss_cross_linux
+    #     asset_name: crisscross_linux
+    #     tag: ${{ github.ref }}
 
-    - name: Build Release
-      uses: svenstaro/upload-release-action@v2
-      with:
-        name: hansonkd/crisscross
-        repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: burrito_out/criss_cross_macos
-        asset_name: crisscross_macos
-        tag: ${{ github.ref }}
+    # - name: Build Release
+    #   uses: svenstaro/upload-release-action@v2
+    #   with:
+    #     name: hansonkd/crisscross
+    #     repo_token: ${{ secrets.GITHUB_TOKEN }}
+    #     file: burrito_out/criss_cross_macos
+    #     asset_name: crisscross_macos
+    #     tag: ${{ github.ref }}
