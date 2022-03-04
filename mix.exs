@@ -49,16 +49,15 @@ defmodule CrissCross.MixProject do
       {:ex_p2p,
        github: "SoCal-Software-Labs/ExP2P", ref: "3db87ad2206ad8c4327ba84cdb1c3d9f189a4097"},
       # {:ex_p2p, path: "../ex_p2p"},
-      # {:criss_cross_dht,
-      #  github: "SoCal-Software-Labs/CrissCrossDHT",
-      #  ref: "7aa9cd731348c1cd397a3580158333e9f87ccd76"},
-      {:criss_cross_dht, path: "../MlDHT"},
+      {:criss_cross_dht,
+       github: "SoCal-Software-Labs/CrissCrossDHT",
+       ref: "93e60d57bf7905b53a000f9c70799ce02d3f8fd4"},
+      # {:criss_cross_dht, path: "../MlDHT"},
       {:rustler, "~> 0.23.0"},
       {:yaml_elixir, "~> 2.8"},
       {:sorted_set_kv, "~> 0.1.3"},
       {:hammer, "~> 6.0"},
-      {:burrito,
-       github: "SoCal-Software-Labs/burrito", ref: "22d2bae44983b34eb1413806da0b75372c25fae7"}
+      {:burrito, github: "burrito-elixir/burrito"}
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]
