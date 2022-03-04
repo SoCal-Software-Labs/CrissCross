@@ -26,7 +26,7 @@ jobs:
         key: ${{ runner.os }}-brew
     
     - name: Cache Mix
-      id: cache-brew
+      id: cache-mix
       uses: actions/cache@v2
       with:
         path: |
@@ -52,7 +52,9 @@ jobs:
 
 
     - run: mix deps.get
-    - run: MIX_ENV=prod mix compile
+    - name: Compile Elixir
+      if: steps.cache-mix.outputs.cache-hit != 'true'
+      run: MIX_ENV=prod mix compile
     # - run: MIX_ENV=prod mix release
 
     # - name: Build Release
