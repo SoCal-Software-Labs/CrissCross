@@ -14,6 +14,10 @@ defmodule CrissCross.CommandQueue do
     %{stream_agent: pid}
   end
 
+  def cleanup(%{:stream_agent => pid}) do
+    Agent.stop(pid)
+  end
+
   def handle_new_message("vpn" <> msg, sender, _from, endpoint, _local_store, _state) do
     try do
       case msg do

@@ -13,5 +13,5 @@
     --name crisscross \
     --network host \
     -d \
-    hansonkd/crisscross:v0.0.4c
+    hansonkd/crisscross:v0.0.6
 )

@@ -292,7 +292,7 @@ Take the `Name` value from `./keys/my_tunnel.yaml` and distribute it to the clie
 ```console
 $ crisscross tunnel_open \
     "^defaultcluster" \
-    "*./keys/my_tunnel.yaml#Name" \
+    "<NAMEVALUE_FROM_SERVER>" \
     "SECRETPASS" \
     7777 \
     "www.httpbin.org" \

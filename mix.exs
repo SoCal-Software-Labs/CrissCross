@@ -23,7 +23,12 @@ defmodule CrissCross.MixProject do
   def releases do
     [
       crisscross: [
-        steps: [:assemble, &Burrito.wrap/1],
+        steps:
+          if System.get_env("BURRITO_TARGET") == "none" do
+            [:assemble]
+          else
+            [:assemble, &Burrito.wrap/1]
+          end,
         burrito: [
           targets: [
             macos: [os: :darwin, cpu: :x86_64],
@@ -47,11 +52,11 @@ defmodule CrissCross.MixProject do
       {:ex_multihash, "~> 2.0"},
       {:ex_schnorr, "~> 0.1.1"},
       {:ex_p2p,
-       github: "SoCal-Software-Labs/ExP2P", ref: "3db87ad2206ad8c4327ba84cdb1c3d9f189a4097"},
-      # {:ex_p2p, path: "../ex_p2p"},
+       github: "SoCal-Software-Labs/ExP2P", ref: "2104c37904e89f32ea84418fd002d19efe4c4bfb"},
+      # {:ex_p2p, path: "../ex_p2p", override: true},
       {:criss_cross_dht,
        github: "SoCal-Software-Labs/CrissCrossDHT",
-       ref: "6da723cb04225718948a8e15ddfa50e9603a4c2e"},
+       ref: "6cf018544b10d5e3f36634832d20772925384051"},
       # {:criss_cross_dht, path: "../MlDHT"},
       {:rustler, "~> 0.23.0"},
       {:yaml_elixir, "~> 2.8"},

@@ -117,10 +117,23 @@ defmodule CrissCross.Application do
       System.get_env("BOOTSTRAP_CLUSTER", @cluster_name) |> Utils.decode_human!()
 
     external_port = System.get_env("EXTERNAL_PORT", "#{@default_udp}") |> String.to_integer()
-    internal_tcp_port = System.get_env("INTERNAL_TCP_PORT", "11111") |> String.to_integer()
+    internal_tcp_port = System.get_env("INTERNAL_PORT", "11111") |> String.to_integer()
 
     auth = System.get_env("LOCAL_AUTH", "")
     tunnel_token = System.get_env("TUNNEL_TOKEN")
+    port_forward = System.get_env("PORT_FORWARD", "") not in ["", "0", "false"]
+
+    client_config =
+      case String.split(System.get_env("CLIENT_CONFIG", ""), "@", parts: 2) do
+        [] ->
+          nil
+
+        [""] ->
+          nil
+
+        [hash, cluster] ->
+          %{cluster: Utils.decode_human!(cluster), hash: Utils.decode_human!(hash)}
+      end
 
     cluster_dir =
       System.get_env("CLUSTER_DIR", "./clusters") |> String.trim_trailing("?") |> Path.expand()
@@ -145,6 +158,8 @@ defmodule CrissCross.Application do
     {:ok, store} = make_make_store.().(nil, nil)
     node_id = node_id(store)
 
+    client_mode = client_config != nil
+
     dht_config = %{
       bootstrap_overlay: bootstrap_overlay,
       port: external_port,
@@ -155,6 +170,7 @@ defmodule CrissCross.Application do
       name_dir: name_dir,
       bootstrap_nodes: bootstrap_nodes,
       k_bucket_size: 12,
+      client_mode: client_mode,
       storage: storage,
       process_values_callback: fn cluster, value, ttl ->
         CrissCross.ValueCloner.queue(cluster, value, ttl)
@@ -162,23 +178,25 @@ defmodule CrissCross.Application do
     }
 
     dispatcher_callback = fn endpoint, _connection, msg, sender, from, state ->
-      {l, r} =
-        case from do
-          "[" <> rest ->
-            [l, r] = String.split(rest, "]:", parts: 2)
-            {l, r}
-
-          _ ->
-            [l, r] = String.split(from, ":", parts: 2)
-            {l, r}
-        end
-
-      {:ok, addr} = :inet.parse_address(String.to_charlist(l))
+      {addr, port} = Utils.parse_conn_string(from)
 
       if is_nil(sender) do
-        send(@process_name, {:udp, endpoint, addr, String.to_integer(r), msg})
+        send(@process_name, {:incoming, endpoint, addr, port, msg})
       else
-        CrissCross.CommandQueue.handle_new_message(msg, sender, from, endpoint, store, state)
+        case msg do
+          "dht-" <> real_msg ->
+            send(@process_name, {:incoming, endpoint, {:stream, sender, from}, nil, real_msg})
+
+          real_msg ->
+            CrissCross.CommandQueue.handle_new_message(
+              real_msg,
+              sender,
+              from,
+              endpoint,
+              store,
+              state
+            )
+        end
       end
 
       :ok
@@ -193,8 +211,11 @@ defmodule CrissCross.Application do
        bind_addr: Utils.tuple_to_ipstr(bind_ip, external_port),
        bootstrap_nodes: bootstrap_nodes_for_endpoint,
        connection_mod: ExP2P.Connection,
+       client_mode: client_mode,
+       port_forward: port_forward,
        connection_mod_args: %{
          new_state: &CrissCross.CommandQueue.new_state/1,
+         cleanup: &CrissCross.CommandQueue.cleanup/1,
          callback: dispatcher_callback
        },
        opts: [name: ExP2P.Dispatcher]},

@@ -26,7 +26,7 @@ RUN . $HOME/.cargo/env && mix do deps.get, deps.compile
 COPY rel rel
 COPY lib lib
 COPY native native
-RUN . $HOME/.cargo/env && mix do compile, release
+RUN . $HOME/.cargo/env && BURRITO_TARGET=none mix do compile, release
 
 # prepare release image
 FROM debian:buster-slim AS app
@@ -47,7 +47,7 @@ RUN /bin/sh -c "mkdir /data && chown crisscross:crisscross /data"
 
 
 # copy release to app container
-COPY --from=build /app/_build/prod/rel/criss_cross .
+COPY --from=build /app/_build/prod/rel/crisscross .
 COPY priv/.bashrc $HOME/.bashrc
 RUN . $HOME/.bashrc
 

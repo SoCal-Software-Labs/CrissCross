@@ -1,4 +1,4 @@
 #!/bin/bash
 
-bin="/app/bin/criss_cross"
+bin="/app/bin/crisscross"
 exec "$bin" "start"
