@@ -54,7 +54,7 @@ defmodule CrissCross do
       fn f ->
         f.()
       end,
-      opts + [timeout: :infinity]
+      opts ++ [timeout: :infinity]
     )
     |> Stream.flat_map(fn
       {:ok, {k, {@value, value}}} -> [{k, value}]
