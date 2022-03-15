@@ -56,7 +56,7 @@ defmodule CrissCross.MixProject do
       # {:ex_p2p, path: "../ex_p2p", override: true},
       {:criss_cross_dht,
        github: "SoCal-Software-Labs/CrissCrossDHT",
-       ref: "6cf018544b10d5e3f36634832d20772925384051"},
+       ref: "f1098f093c44f39f2179c86ee639f3e4b9c5e51f"},
       # {:criss_cross_dht, path: "../MlDHT"},
       {:rustler, "~> 0.23.0"},
       {:yaml_elixir, "~> 2.8"},

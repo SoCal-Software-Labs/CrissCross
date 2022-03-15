@@ -157,7 +157,7 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
     encrypted = encrypt_cluster_message(cluster, location)
 
     ret =
-      ExP2P.pseudo_bidirectional(
+      ExP2P.bidirectional(
         endpoint,
         conn,
         serialize_bert(["GET", cluster, encrypted]),
