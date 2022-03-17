@@ -221,6 +221,8 @@ defmodule CrissCross.CommandQueue do
   def queue_msg(msg, sender, from, endpoint, local_store, state, tries) do
     case Hammer.check_rate("commands:#{from}", 1_000, @max_commands_second) do
       {:allow, _count} ->
+        IO.inspect(:allowed)
+
         try do
           handle_msg(msg, sender, endpoint, state, from, local_store)
         rescue
@@ -246,6 +248,7 @@ defmodule CrissCross.CommandQueue do
           serialize_bert({:ok, "PONG"})
 
         ["GET", cluster, loc_encrypted] ->
+          IO.inspect(:get)
           ret = do_get(local_store, cluster, loc_encrypted)
           encrypt_cluster_message(cluster, serialize_bert(ret))
 
@@ -271,8 +274,10 @@ defmodule CrissCross.CommandQueue do
           end
       end
 
+    IO.inspect({:ret, ret})
+
     if ret != nil do
-      :ok = ExP2P.stream_send(endpoint, sender, ret, 10_000)
+      :ok = ExP2P.stream_send(endpoint, sender, ret, 10_000) |> IO.inspect()
     end
   end
 

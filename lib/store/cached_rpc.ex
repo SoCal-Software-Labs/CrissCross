@@ -161,7 +161,7 @@ defimpl CubDB.Store, for: CrissCross.Store.CachedRPC do
         endpoint,
         conn,
         serialize_bert(["GET", cluster, encrypted]),
-        @get_timeout
+        @get_timeout * System.schedulers()
       )
 
     case ret do
